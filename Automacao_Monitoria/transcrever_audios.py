@@ -293,74 +293,29 @@ def classificar_falantes_com_gpt(texto_transcricao):
         return texto_transcricao
 
 def process_audio_file(caminho_audio):
-    """Processa um arquivo de áudio: transcrição em VTT e diarização com Pyannote.audio."""
-    # 1. Transcreve o áudio com Whisper e solicita saída em VTT (com timestamps)
-    print(f"Transcrevendo (VTT) {caminho_audio}...")
+    print(f"Transcrevendo com gpt-4o-transcribe: {caminho_audio}...")
     try:
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
         with open(caminho_audio, 'rb') as audio_file:
             transcription_response = client.audio.transcriptions.create(
-                model="whisper-1",
+                model="gpt-4o-transcribe",
                 file=audio_file,
-                response_format="vtt"
+                response_format="text"
             )
-        
-        # A resposta pode vir em diferentes formatos, dependendo da versão da API
+        # Se a resposta for um objeto Transcription, extrai o texto
         if hasattr(transcription_response, 'text'):
-            vtt_text = transcription_response.text
+            text = transcription_response.text
         elif isinstance(transcription_response, str):
-            vtt_text = transcription_response
-        elif isinstance(transcription_response, dict) and "text" in transcription_response:
-            vtt_text = transcription_response["text"]
+            text = transcription_response
         else:
             print(f"Formato de resposta desconhecido: {type(transcription_response)}")
             print(f"Conteúdo: {transcription_response}")
             return None
-        
         print("Transcrição concluída!")
+        return text
     except Exception as e:
         print(f"Erro na transcrição: {e}")
         return None
-
-    # Processa a transcrição VTT para texto com timestamps (formato padronizado)
-    segments = parse_vtt(vtt_text)
-    formatted_text = []
-    for seg in segments:
-        start_time = seg["start"]
-        end_time = seg["end"]
-        # Formata os tempos em hh:mm:ss
-        def format_time(s):
-            hrs = int(s // 3600)
-            mins = int((s % 3600) // 60)
-            secs = s % 60
-            return f"{hrs:02d}:{mins:02d}:{secs:05.2f}"
-        time_str = f"[{format_time(start_time)} - {format_time(end_time)}]"
-        formatted_text.append(f"{time_str} SPEAKER_UNKNOWN: {seg['text']}")
-    
-    formatted_transcription = "\n".join(formatted_text)
-    
-    # 2. Tenta realizar a diarização com Pyannote.audio
-    diarization_success = False
-    if pipeline is not None:
-        print(f"Realizando diarização em {caminho_audio}...")
-        try:
-            diarization = pipeline(caminho_audio)
-            print("Diarização concluída!")
-            
-            # Mescla a transcrição com a diarização
-            print("Mesclando transcrição e diarização...")
-            final_text = merge_transcript_and_diarization(vtt_text, diarization)
-            diarization_success = True
-        except Exception as e:
-            print(f"Erro na diarização: {e}")
-            diarization_success = False
-    
-    # 3. Se a diarização falhar ou não estiver disponível, use GPT-4.1-mini
-    if not diarization_success:
-        print("Usando GPT-4.1-mini para identificar falantes...")
-        final_text = classificar_falantes_com_gpt(formatted_transcription)
-    
-    return final_text
 
 def process_audio_folder(pasta):
     extensoes_audio = ['.mp3', '.wav', '.m4a', '.ogg', '.flac']
@@ -368,77 +323,43 @@ def process_audio_folder(pasta):
     if not arquivos:
         print('Nenhum arquivo de áudio encontrado na pasta.')
         return
-    
-    # Criar pastas para áudios processados, transcrições e erros
     pasta_audios_transcritos = os.path.join(pasta, 'Audios_transcritos')
     pasta_transcricoes = os.path.join(pasta, 'Transcrições_aguas')
     pasta_erros = os.path.join(pasta, 'Audios_erros')
-    
-    # Criar as pastas se não existirem
     os.makedirs(pasta_audios_transcritos, exist_ok=True)
     os.makedirs(pasta_transcricoes, exist_ok=True)
     os.makedirs(pasta_erros, exist_ok=True)
-    
     print(f"Pasta para áudios processados: {pasta_audios_transcritos}")
     print(f"Pasta para transcrições: {pasta_transcricoes}")
     print(f"Pasta para áudios com erro: {pasta_erros}")
-    
     for arquivo in arquivos:
         caminho_audio = os.path.join(pasta, arquivo)
         print(f"Processando: {arquivo}")
-        try:
-            final_text = process_audio_file(caminho_audio)
-            
-            if final_text:
-                nome_txt = os.path.splitext(arquivo)[0] + '_diarizado.txt'
-                caminho_txt = os.path.join(pasta_transcricoes, nome_txt)
-                
-                # Salvar a transcrição na pasta de transcrições
-                with open(caminho_txt, 'w', encoding='utf-8') as f:
-                    f.write(final_text)
-                print(f"Transcrição salva em: {caminho_txt}")
-                
-                # Mover o áudio processado para a pasta de áudios processados
-                caminho_destino = os.path.join(pasta_audios_transcritos, arquivo)
-                try:
-                    import shutil
-                    shutil.move(caminho_audio, caminho_destino)
-                    print(f"Arquivo de áudio movido para: {caminho_destino}")
-                except Exception as e:
-                    print(f"Erro ao mover o arquivo de áudio: {e}")
-            else:
-                # Mover áudio para pasta de erros se o processamento falhou
-                caminho_erro = os.path.join(pasta_erros, arquivo)
-                try:
-                    import shutil
-                    shutil.move(caminho_audio, caminho_erro)
-                    print(f"Falha ao processar {arquivo} - Arquivo movido para pasta de erros: {caminho_erro}")
-                    
-                    # Opcionalmente, criar um arquivo de log explicando o erro
-                    log_path = os.path.join(pasta_erros, f"{os.path.splitext(arquivo)[0]}_erro.txt")
-                    with open(log_path, 'w', encoding='utf-8') as log_file:
-                        log_file.write(f"Erro ao processar o arquivo {arquivo}\n")
-                        log_file.write(f"Data/hora: {format_time_now()}\n")
-                        log_file.write(f"Falha na transcrição ou identificação de falantes")
-                except Exception as move_error:
-                    print(f"Erro ao mover o arquivo com falha: {move_error}")
-        except Exception as e:
-            # Captura erros gerais do processamento de áudio
-            print(f"Erro durante o processamento de {arquivo}: {e}")
-            
-            # Mover áudio para pasta de erros
+        final_text = process_audio_file(caminho_audio)
+        if final_text:
+            nome_txt = os.path.splitext(arquivo)[0] + '_diarizado.txt'
+            caminho_txt = os.path.join(pasta_transcricoes, nome_txt)
+            with open(caminho_txt, 'w', encoding='utf-8') as f:
+                f.write(final_text)
+            print(f"Transcrição salva em: {caminho_txt}")
+            caminho_destino = os.path.join(pasta_audios_transcritos, arquivo)
+            try:
+                import shutil
+                shutil.move(caminho_audio, caminho_destino)
+                print(f"Arquivo de áudio movido para: {caminho_destino}")
+            except Exception as e:
+                print(f"Erro ao mover o arquivo de áudio: {e}")
+        else:
             caminho_erro = os.path.join(pasta_erros, arquivo)
             try:
                 import shutil
                 shutil.move(caminho_audio, caminho_erro)
-                print(f"Arquivo movido para pasta de erros: {caminho_erro}")
-                
-                # Criar um arquivo de log explicando o erro
+                print(f"Falha ao processar {arquivo} - Arquivo movido para pasta de erros: {caminho_erro}")
                 log_path = os.path.join(pasta_erros, f"{os.path.splitext(arquivo)[0]}_erro.txt")
                 with open(log_path, 'w', encoding='utf-8') as log_file:
                     log_file.write(f"Erro ao processar o arquivo {arquivo}\n")
                     log_file.write(f"Data/hora: {format_time_now()}\n")
-                    log_file.write(f"Erro: {str(e)}")
+                    log_file.write(f"Falha na transcrição ou identificação de falantes")
             except Exception as move_error:
                 print(f"Erro ao mover o arquivo com falha: {move_error}")
 
