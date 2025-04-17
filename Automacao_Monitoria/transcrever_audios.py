@@ -275,16 +275,40 @@ def process_audio_folder(pasta):
     if not arquivos:
         print('Nenhum arquivo de áudio encontrado na pasta.')
         return
+    
+    # Criar pastas para áudios processados e transcrições
+    pasta_audios_transcritos = os.path.join(pasta, 'Audios_transcritos')
+    pasta_transcricoes = os.path.join(pasta, 'Transcrições_aguas')
+    
+    # Criar as pastas se não existirem
+    os.makedirs(pasta_audios_transcritos, exist_ok=True)
+    os.makedirs(pasta_transcricoes, exist_ok=True)
+    
+    print(f"Pasta para áudios processados: {pasta_audios_transcritos}")
+    print(f"Pasta para transcrições: {pasta_transcricoes}")
+    
     for arquivo in arquivos:
         caminho_audio = os.path.join(pasta, arquivo)
         print(f"Processando: {arquivo}")
         final_text = process_audio_file(caminho_audio)
+        
         if final_text:
             nome_txt = os.path.splitext(arquivo)[0] + '_diarizado.txt'
-            caminho_txt = os.path.join(pasta, nome_txt)
+            caminho_txt = os.path.join(pasta_transcricoes, nome_txt)
+            
+            # Salvar a transcrição na pasta de transcrições
             with open(caminho_txt, 'w', encoding='utf-8') as f:
                 f.write(final_text)
-            print(f"Arquivo salvo: {nome_txt}")
+            print(f"Transcrição salva em: {caminho_txt}")
+            
+            # Mover o áudio processado para a pasta de áudios processados
+            caminho_destino = os.path.join(pasta_audios_transcritos, arquivo)
+            try:
+                import shutil
+                shutil.move(caminho_audio, caminho_destino)
+                print(f"Arquivo de áudio movido para: {caminho_destino}")
+            except Exception as e:
+                print(f"Erro ao mover o arquivo de áudio: {e}")
         else:
             print(f"Falha ao processar {arquivo}")
 
