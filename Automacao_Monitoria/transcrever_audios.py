@@ -152,14 +152,14 @@ def merge_transcript_and_diarization(vtt_text, diarization):
 
 def classificar_falantes_com_gpt(texto_transcricao):
     """
-    Usa o modelo GPT-4.1-mini para identificar os falantes como 'Cliente' ou 'Conciliador'
+    Usa o modelo GPT-4.1-mini para identificar os falantes como 'Cliente' ou 'Agente'
     em uma transcrição de áudio.
     
     Args:
         texto_transcricao (str): O texto transcrito do áudio
         
     Returns:
-        str: Texto da transcrição com os falantes identificados como Cliente ou Conciliador
+        str: Texto da transcrição com os falantes identificados como Cliente ou Agente
     """
     try:
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -170,14 +170,14 @@ def classificar_falantes_com_gpt(texto_transcricao):
         
         Regras para identificar os falantes:
         - O Cliente geralmente inicia com "Alô", pergunta "quem é" ou "quem fala", e responde às perguntas
-        - O Conciliador geralmente se apresenta, dá bom dia, menciona a empresa, explica sobre débitos/cobranças
-        - O Conciliador conduz a conversa fazendo perguntas sobre pagamentos
-        - O Cliente geralmente responde às perguntas do conciliador
+        - O Agente geralmente se apresenta, dá bom dia, menciona a empresa, explica sobre débitos/cobranças
+        - O Agente conduz a conversa fazendo perguntas sobre pagamentos
+        - O Cliente geralmente responde às perguntas do agente
         
         Formato da transcrição original:
         [TIMESTAMP] SPEAKER_ID: texto da fala
         
-        Substitua SPEAKER_ID por "Cliente" ou "Conciliador" baseado no contexto da conversa.
+        Substitua SPEAKER_ID por "Cliente" ou "Agente" baseado no contexto da conversa.
         Mantenha exatamente o mesmo texto e formato, mudando apenas a identificação do falante.
         
         Transcrição:
