@@ -292,6 +292,31 @@ def classificar_falantes_com_gpt(texto_transcricao):
         print(f"Erro ao classificar falantes com GPT-4.1-mini: {e}")
         return texto_transcricao
 
+def identificar_falantes_com_gpt41nano(transcricao):
+    """
+    Usa o modelo gpt-4.1-nano para identificar os falantes como 'Agente' e 'Cliente' na transcrição.
+    """
+    client = _get_client()
+    prompt = (
+        "Analise a transcrição de uma ligação de cobrança abaixo. "
+        "Cada linha está no formato [TIMESTAMP] SPEAKER_UNKNOWN: texto. "
+        "Substitua SPEAKER_UNKNOWN por 'Agente' ou 'Cliente' conforme o contexto da conversa. "
+        "O Agente geralmente se apresenta, menciona a empresa, faz perguntas sobre débitos e conduz a negociação. "
+        "O Cliente responde, pode iniciar com 'Alô', perguntar 'quem fala', ou responder às perguntas do Agente. "
+        "Mantenha o formato original, alterando apenas a identificação do falante.\n\n"
+        f"Transcrição:\n{transcricao}"
+    )
+    response = client.chat.completions.create(
+        model="gpt-4.1-nano",
+        messages=[
+            {"role": "system", "content": "Você é um assistente que identifica falantes em transcrições de ligações."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.0,
+        max_tokens=4096
+    )
+    return response.choices[0].message.content.strip()
+
 def process_audio_file(caminho_audio):
     print(f"Transcrevendo com gpt-4o-transcribe: {caminho_audio}...")
     try:
@@ -337,10 +362,16 @@ def process_audio_folder(pasta):
         print(f"Processando: {arquivo}")
         final_text = process_audio_file(caminho_audio)
         if final_text:
+            # Identificar falantes usando o modelo gpt-4.1-nano
+            try:
+                final_text_identificado = identificar_falantes_com_gpt41nano(final_text)
+            except Exception as e:
+                print(f"Erro ao identificar falantes com gpt-4.1-nano: {e}")
+                final_text_identificado = final_text
             nome_txt = os.path.splitext(arquivo)[0] + '_diarizado.txt'
             caminho_txt = os.path.join(pasta_transcricoes, nome_txt)
             with open(caminho_txt, 'w', encoding='utf-8') as f:
-                f.write(final_text)
+                f.write(final_text_identificado)
             print(f"Transcrição salva em: {caminho_txt}")
             caminho_destino = os.path.join(pasta_audios_transcritos, arquivo)
             try:
