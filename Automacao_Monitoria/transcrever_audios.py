@@ -555,6 +555,61 @@ def avaliar_ligacao(transcricao: str, *,
         print(f"ERRO: {error_msg}")
         raise RuntimeError(error_msg) from e
 
+def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
+    import csv
+    import re
+    # Cabeçalhos das categorias principais do relatório
+    categorias_relatorio = [
+        'Abordagem',
+        'Segurança',
+        'Fraseologia de Momento e Retorno',
+        'Comunicação',
+        'Cordialidade',
+        'Empatia',
+        'Escuta Ativa',
+        'Clareza & Objetividade',
+        'Oferta de Solução & Condições',
+        'Confirmação de Aceite',
+        'Reforço de Prazo & Condições',
+        'Encerramento',
+     #   'Registro no GSS',
+        'Falha Critica'
+    ]
+    campos = ['data', 'agente', 'fila'] + categorias_relatorio
+    import glob
+    arquivos_json = glob.glob(os.path.join(pasta_avaliacoes, '*_avaliacao.json'))
+    if not arquivos_json:
+        print(f"Nenhum arquivo de avaliação encontrado em {pasta_avaliacoes}")
+        return
+    linhas = []
+    for caminho_json in arquivos_json:
+        with open(caminho_json, encoding='utf-8') as f:
+            dados = json.load(f)
+        nome_arquivo = os.path.basename(caminho_json)
+        m = re.match(r'(\d{8})_\d{6}_Agente_(\d+)_Fila_(.+?)_diarizado_?avaliacao.json', nome_arquivo)
+        if not m:
+            m = re.match(r'(\d{8})_\d{6}_Agente_(\d+)_Fila_(.+?)_avaliacao.json', nome_arquivo)
+        if m:
+            data_str, agente, fila = m.groups()
+            data_fmt = f"{data_str[:4]}-{data_str[4:6]}-{data_str[6:]}"
+        else:
+            data_fmt, agente, fila = '', '', ''
+        linha = [data_fmt, agente, fila.replace('_', ' ')]
+        for categoria in categorias_relatorio:
+            status = ''
+            # Busca o status do primeiro item de cada categoria
+            itens_categoria = dados.get('itens', {}).get(categoria, {})
+            if itens_categoria:
+                # Pega o status do primeiro subitem
+                status = next(iter(itens_categoria.values())).get('status', '')
+            linha.append(status)
+        linhas.append(linha)
+    with open(csv_saida, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(campos)
+        writer.writerows(linhas)
+    print(f"CSV consolidado gerado em: {csv_saida}")
+
 if __name__ == '__main__':
     pasta_audios = r'C:\Users\wanderley.terra\Documents\Audios_monitoria'
     
@@ -564,5 +619,10 @@ if __name__ == '__main__':
     # Depois processar as transcrições para avaliação
     pasta_transcricoes = os.path.join(pasta_audios, 'Transcrições_aguas')
     process_transcription_folder(pasta_transcricoes)
+    
+    # Gerar relatório consolidado em CSV
+    pasta_avaliacoes = os.path.join(pasta_transcricoes, 'Transcrições_avaliadas')
+    csv_saida = os.path.join(pasta_avaliacoes, 'relatorio_avaliacoes.csv')
+    gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida)
     
     print("Processamento completo!")
