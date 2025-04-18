@@ -616,7 +616,7 @@ def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
 #   'Registro no GSS',
         'Falha Critica'
     ]
-    campos = ['data', 'agente', 'fila'] + categorias_relatorio
+    campos = ['data', 'agente', 'fila'] + categorias_relatorio + ['pontuacao_percentual']
     import glob
     arquivos_json = glob.glob(os.path.join(pasta_avaliacoes, '*_avaliacao.json'))
     if not arquivos_json:
@@ -646,6 +646,8 @@ def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
                 elif isinstance(primeiro, str):
                     status = primeiro
             linha.append(status)
+        # Adiciona a pontuação percentual ao final da linha
+        linha.append(dados.get('pontuacao_percentual', ''))
         linhas.append(linha)
     with open(csv_saida, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
