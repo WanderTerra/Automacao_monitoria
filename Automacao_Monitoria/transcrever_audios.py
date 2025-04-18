@@ -451,6 +451,12 @@ def process_transcription_folder(pasta_transcricoes):
             
             # Avaliar a transcrição
             avaliacao = avaliar_ligacao(conteudo_transcricao, id_chamada=id_chamada)
+            # Redistribuir pesos e pontuação se houver N/A
+            if 'itens' in avaliacao:
+                resultado_redistribuido = redistribuir_pesos_e_pontuacao(avaliacao['itens'])
+                avaliacao['itens'] = resultado_redistribuido['itens']
+                avaliacao['pontuacao_total'] = resultado_redistribuido['pontuacao_total']
+                avaliacao['pontuacao_percentual'] = resultado_redistribuido['pontuacao_percentual']
             
             # Criar nome para o arquivo de avaliação
             nome_avaliacao = f"{id_chamada}_avaliacao.json"
@@ -556,6 +562,39 @@ def avaliar_ligacao(transcricao: str, *,
         error_msg = f"Resposta não é JSON válido para ligação {id_chamada}"
         print(f"ERRO: {error_msg}")
         raise RuntimeError(error_msg) from e
+
+def redistribuir_pesos_e_pontuacao(itens: dict) -> dict:
+    """
+    Redistribui os pesos das categorias ignorando as que receberam 'N/A',
+    garantindo que a soma dos pesos das categorias válidas (Conforme + Não Conforme) seja 1.0 (100%).
+    A pontuação final é a soma dos pesos das categorias marcadas como 'Conforme'.
+    """
+    subitens = []
+    for categoria, subdict in itens.items():
+        for nome, info in subdict.items():
+            subitens.append((categoria, nome, info))
+    # Filtrar subitens válidos (não N/A)
+    subitens_validos = [s for s in subitens if s[2].get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']]
+    n_validos = len(subitens_validos)
+    if n_validos == 0:
+        return itens  # Evita divisão por zero
+    peso_redistribuido = 1.0 / n_validos
+    # Atribuir novo peso para cada subitem válido e zerar para N/A
+    for categoria, nome, info in subitens:
+        if info.get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']:
+            info['peso'] = round(peso_redistribuido, 4)
+        else:
+            info['peso'] = 0.0
+    # Calcular pontuação total redistribuída (só soma os 'Conforme')
+    pontuacao_total = 0.0
+    for categoria, nome, info in subitens:
+        if info.get('status', '').strip().upper() == 'CONFORME':
+            pontuacao_total += info['peso']
+    return {
+        'itens': itens,
+        'pontuacao_total': round(pontuacao_total * 10, 2),  # nota de 0 a 10
+        'pontuacao_percentual': round(pontuacao_total * 100, 1)  # nota de 0 a 100
+    }
 
 def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
     import csv
