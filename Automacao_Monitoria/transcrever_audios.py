@@ -614,6 +614,99 @@ def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
         writer.writerows(linhas)
     print(f"CSV consolidado gerado em: {csv_saida}")
 
+import wave
+
+def calcular_duracao_audio_wav(caminho_audio):
+    try:
+        with wave.open(caminho_audio, 'rb') as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            duracao = frames / float(rate)
+            return duracao  # em segundos
+    except Exception as e:
+        print(f"Erro ao calcular duração de {caminho_audio}: {e}")
+        return 0
+
+def gerar_relatorio_gastos(pasta_audios, pasta_transcricoes, relatorio_saida,
+                          modelo_transcricao='gpt-4o-transcribe',
+                          preco_min_transcricao=0.006,
+                          modelo_avaliacao='gpt-4.1-nano',
+                          preco_avaliacao_por_chamada=0.002):
+    import csv
+    import glob
+    import re
+    from datetime import datetime
+    
+    # Busca todos os áudios processados
+    arquivos_audio = glob.glob(os.path.join(pasta_audios, 'Audios_transcritos', '*.wav'))
+    arquivos_audio += glob.glob(os.path.join(pasta_audios, 'Audios_transcritos', '*.mp3'))
+    arquivos_audio += glob.glob(os.path.join(pasta_audios, 'Audios_transcritos', '*.m4a'))
+    arquivos_audio += glob.glob(os.path.join(pasta_audios, 'Audios_transcritos', '*.flac'))
+    arquivos_audio += glob.glob(os.path.join(pasta_audios, 'Audios_transcritos', '*.ogg'))
+    
+    # Busca avaliações
+    pasta_avaliacoes = os.path.join(pasta_transcricoes, 'Transcrições_avaliadas')
+    arquivos_json = glob.glob(os.path.join(pasta_avaliacoes, '*_avaliacao.json'))
+    
+    # Monta índice de avaliações por nome base
+    avaliacoes = {}
+    for caminho_json in arquivos_json:
+        nome_base = os.path.basename(caminho_json).split('_avaliacao.json')[0]
+        avaliacoes[nome_base] = caminho_json
+    
+    linhas = []
+    total_transcricao = 0
+    total_avaliacao = 0
+    total_geral = 0
+    for caminho_audio in arquivos_audio:
+        nome_audio = os.path.basename(caminho_audio)
+        nome_base = os.path.splitext(nome_audio)[0]
+        # Extrair data, agente, fila
+        m = re.match(r'(\d{8})_\d{6}_Agente_(\d+)_Fila_(.+)', nome_base)
+        if m:
+            data_str, agente, fila = m.groups()
+            data_fmt = f"{data_str[:4]}-{data_str[4:6]}-{data_str[6:]}"
+        else:
+            data_fmt, agente, fila = '', '', ''
+        # Duração
+        duracao_seg = calcular_duracao_audio_wav(caminho_audio)
+        duracao_min = duracao_seg / 60
+        # Custo transcrição
+        custo_transcricao = duracao_min * preco_min_transcricao
+        # Custo avaliação (se houver avaliação)
+        nome_base_aval = nome_base + '_diarizado' if (nome_base + '_diarizado') in avaliacoes else nome_base
+        custo_avaliacao = preco_avaliacao_por_chamada if nome_base_aval in avaliacoes else 0
+        # Total
+        custo_total = custo_transcricao + custo_avaliacao
+        total_transcricao += custo_transcricao
+        total_avaliacao += custo_avaliacao
+        total_geral += custo_total
+        linhas.append([
+            nome_audio, data_fmt, agente, fila.replace('_', ' '),
+            f"{duracao_min:.2f}",
+            f"${custo_transcricao:.4f}",
+            f"${custo_avaliacao:.4f}",
+            f"${custo_total:.4f}"
+        ])
+    # Cabeçalhos
+    campos = [
+        'arquivo', 'data', 'agente', 'fila', 'duração_min',
+        f'custo_transcricao_{modelo_transcricao}_usd',
+        f'custo_avaliacao_{modelo_avaliacao}_usd',
+        'custo_total_usd'
+    ]
+    # Escreve CSV
+    with open(relatorio_saida, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow(campos)
+        writer.writerows(linhas)
+        # Linha de totais
+        writer.writerow(['TOTAL', '', '', '', '',
+                         f"${total_transcricao:.4f}",
+                         f"${total_avaliacao:.4f}",
+                         f"${total_geral:.4f}"])
+    print(f"Relatório de gastos gerado em: {relatorio_saida}")
+
 if __name__ == '__main__':
     pasta_audios = r'C:\Users\wanderley.terra\Documents\Audios_monitoria'
     
@@ -628,5 +721,17 @@ if __name__ == '__main__':
     pasta_avaliacoes = os.path.join(pasta_transcricoes, 'Transcrições_avaliadas')
     csv_saida = os.path.join(pasta_avaliacoes, 'relatorio_avaliacoes.csv')
     gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida)
+    
+    # Gerar relatório de gastos
+    relatorio_gastos_saida = os.path.join(pasta_audios, 'relatorio_gastos.csv')
+    gerar_relatorio_gastos(
+        pasta_audios=pasta_audios,
+        pasta_transcricoes=pasta_transcricoes,
+        relatorio_saida=relatorio_gastos_saida,
+        modelo_transcricao='gpt-4o-transcribe',
+        preco_min_transcricao=0.006,
+        modelo_avaliacao='gpt-4.1-nano',
+        preco_avaliacao_por_chamada=0.002
+    )
     
     print("Processamento completo!")
