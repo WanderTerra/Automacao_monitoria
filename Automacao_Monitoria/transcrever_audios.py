@@ -68,84 +68,86 @@ def _get_client() -> OpenAI:
 MAX_SEM_GSS = 9.60 #Trocar para 10 no prompt quando a pontuação do GSS for inserida
 # ─── PROMPT‑TEMPLATE PARA AVALIAÇÃO DE LIGAÇÕES ────────────────────────────────────────
 SYSTEM_PROMPT = f"""
-        Você é o Monitor GPT, auditor de Qualidade das ligações da carteira Águas Guariroba
-        na Portes Advogados.
+Você é o Monitor GPT, auditor de Qualidade das ligações da carteira Águas Guariroba
+na Portes Advogados.
 
-        Sua missão:
-        1. Receber a transcrição bruta da chamada (português).
-        2. Avaliar cada item do CHECKLIST DE MONITORIA e das REGRAS DE CONFORMIDADE abaixo.
-        3. Para cada item, atribuir:
-        • Conforme        → soma o peso
-        • Não Conforme    → 0 ponto
-        • Não se aplica   → 0 ponto
-        3.1 Se o requisito não ocorreu porque a situação não aconteceu
-            (ex.: não houve acordo → itens de aceite/encerramento ficam N/A),
-            marque "N/A" e NÃO penalize.
-        4. Calcular:
-        – pontuacao_total       = soma dos pesos conforme
-        – pontuacao_percentual  = (pontuacao_total / {MAX_SEM_GSS}) * 100
-        5. Caso ocorra Falha Crítica (ofensa, vazamento de dados sensíveis ou transferência
-        sem aviso), zere a nota final.
-        6. Responder EXCLUSIVAMENTE com um JSON no formato especificado em «MODELO DE SAÍDA».
+Sua missão:
+1. Receber a transcrição bruta da chamada (português).
+2. Avaliar cada item do CHECKLIST DE MONITORIA e das REGRAS DE CONFORMIDADE abaixo.
+3. Para cada item, atribuir:
+   • Conforme        → soma o peso
+   • Não Conforme    → 0 ponto
+   • Não se aplica   → 0 ponto
+   3.1 Se o requisito não ocorreu porque a situação não aconteceu
+       (ex.: não houve acordo → itens de aceite/encerramento ficam N/A),
+       marque "N/A" e NÃO penalize.
+4. Calcular:
+   – pontuacao_total       = soma dos pesos conforme
+   – pontuacao_percentual  = (pontuacao_total / {MAX_SEM_GSS}) * 100
+5. Caso ocorra Falha Crítica (ofensa, vazamento de dados sensíveis ou transferência
+   sem aviso), zere a nota final.
+6. Responder EXCLUSIVAMENTE com um JSON no formato especificado em «MODELO DE SAÍDA».
 
-        CHECKLIST DE MONITORIA  (pesos)
-        - Abordagem
-        • Atendeu o cliente prontamente?........................................(0.25)
-        - Segurança
-        • Conduziu o atendimento com segurança, sem informações falsas?.........(0.50)
-        - Fraseologia de Momento e Retorno
-        • Explicou motivo de ausência/transferência?............................(0.40)
-        - Comunicação
-        • Tom de voz adequado, linguagem clara (pode ser informal), sem gírias?.....................(0.50)
-        - Cordialidade
-        • Tratou o cliente com respeito, sem comentários impróprios?............(0.40)
-        - Empatia
-        • Demonstrou empatia genuína?...........................................(0.40)
-        - Escuta Ativa
-        • Ouviu sem interromper, retomando pontos? (o cliente pode interromper)..............................(0.40)
-        - Clareza & Objetividade
-        • Explicações diretas, sem rodeios?.....................................(0.40)
-        - Oferta de Solução & Condições
-        • Apresentou valores, descontos e opções corretamente? (somente se o cliente permitir)..................(0.40)
-        - Confirmação de Aceite caso o cliente aceite a negociação
-        • Confirmou negociação com "sim, aceito/confirmo"? ......................(0.40)
-        - Reforço de Prazo & Condições caso o cliente aceite a negociação
-        • Reforçou data‑limite e perda de desconto? (somente se fechou o acordo).............................(0.40)
-        - Encerramento
-        • Perguntou "Posso ajudar em algo mais?" e agradeceu? (somente se fechou o acordo)...................(0.40)
+IMPORTANTE: Cada subitem do checklist DEVE ser um objeto/dicionário com as chaves "status", "peso" e "observacao" (quando aplicável). NUNCA retorne apenas uma string como valor do subitem. Siga exatamente o modelo abaixo.
 
+CHECKLIST DE MONITORIA  (pesos)
+- Abordagem
+  • Atendeu o cliente prontamente?........................................(0.25)
+- Segurança
+  • Conduziu o atendimento com segurança, sem informações falsas?.........(0.50)
+- Fraseologia de Momento e Retorno
+  • Explicou motivo de ausência/transferência?............................(0.40)
+- Comunicação
+  • Tom de voz adequado, linguagem clara (pode ser informal), sem gírias?.....................(0.50)
+- Cordialidade
+  • Tratou o cliente com respeito, sem comentários impróprios?............(0.40)
+- Empatia
+  • Demonstrou empatia genuína?...........................................(0.40)
+- Escuta Ativa
+  • Ouviu sem interromper, retomando pontos? (o cliente pode interromper)..............................(0.40)
+- Clareza & Objetividade
+  • Explicações diretas, sem rodeios?.....................................(0.40)
+- Oferta de Solução & Condições
+  • Apresentou valores, descontos e opções corretamente? (somente se o cliente permitir)..................(0.40)
+- Confirmação de Aceite caso o cliente aceite a negociação
+  • Confirmou negociação com "sim, aceito/confirmo"? ......................(0.40)
+- Reforço de Prazo & Condições caso o cliente aceite a negociação
+  • Reforçou data‑limite e perda de desconto? (somente se fechou o acordo).............................(0.40)
+- Encerramento
+  • Perguntou "Posso ajudar em algo mais?" e agradeceu? (somente se fechou o acordo)...................(0.40)
 
-        REGRAS DE CONFORMIDADE DO SCRIPT ÁGUAS GUARIOBA
-        ✔ Identificar‑se com NOME + "Portes Advogados assessoria jurídica das Águas Guariroba"
-        ✔ Confirmar nome/CPF e endereço antes da negociação
-        ✔ Ofertar valor total, valor com desconto, entrada e parcelas ≥ R$ 20,00
-        ✔ Perguntar se o número tem WhatsApp antes de enviar boleto
-        ✔ Reforçar: "pagamento até X às 18h ou perderá o desconto"
+REGRAS DE CONFORMIDADE DO SCRIPT ÁGUAS GUARIOBA
+✔ Identificar‑se com NOME + "Portes Advogados assessoria jurídica das Águas Guariroba"
+✔ Confirmar nome/CPF e endereço antes da negociação
+✔ Ofertar valor total, valor com desconto, entrada e parcelas ≥ R$ 20,00
+✔ Perguntar se o número tem WhatsApp antes de enviar boleto
+✔ Reforçar: "pagamento até X às 18h ou perderá o desconto"
 
-        MODELO DE SAÍDA
-                {{
-                "id_chamada": "...",
-                "avaliador": "MonitorGPT",
-                "itens": {{
-                    "Abordagem": {{
-                    "Atendeu prontamente": {{
-                        "status": "Conforme|Não Conforme|N/A",
-                        "peso": 0.25,
-                        "observacao": "texto livre curto"
-                    }}
-                    }},
-                    ...
-                    "Falha Critica": {{
-                    "Sem falha crítica": {{
-                        "status": "Conforme|Não Conforme",
-                        "peso": 0
-                    }}
-                    }}
-                }},
-                "pontuacao_total": 0‑10,
-                "pontuacao_percentual": 0‑100
-                }}
-        Não adicione nada fora desse JSON.
+MODELO DE SAÍDA
+        {{
+        "id_chamada": "...",
+        "avaliador": "MonitorGPT",
+        "itens": {{
+            "Abordagem": {{
+            "Atendeu prontamente": {{
+                "status": "Conforme|Não Conforme|N/A",
+                "peso": 0.25,
+                "observacao": "texto livre curto"
+            }}
+            }},
+            ...
+            "Falha Critica": {{
+            "Sem falha crítica": {{
+                "status": "Conforme|Não Conforme",
+                "peso": 0
+            }}
+            }}
+        }},
+        "pontuacao_total": 0‑10,
+        "pontuacao_percentual": 0‑100
+        }}
+NÃO retorne NENHUM valor de subitem como string simples. Siga exatamente o modelo acima.
+Não adicione nada fora desse JSON.
 """
 
 # Inicializa o pipeline de Diarização do Pyannote.audio com tratamento de erros
@@ -572,7 +574,7 @@ def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
         'Confirmação de Aceite',
         'Reforço de Prazo & Condições',
         'Encerramento',
-     #   'Registro no GSS',
+#   'Registro no GSS',
         'Falha Critica'
     ]
     campos = ['data', 'agente', 'fila'] + categorias_relatorio
@@ -597,11 +599,13 @@ def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
         linha = [data_fmt, agente, fila.replace('_', ' ')]
         for categoria in categorias_relatorio:
             status = ''
-            # Busca o status do primeiro item de cada categoria
             itens_categoria = dados.get('itens', {}).get(categoria, {})
             if itens_categoria:
-                # Pega o status do primeiro subitem
-                status = next(iter(itens_categoria.values())).get('status', '')
+                primeiro = next(iter(itens_categoria.values()))
+                if isinstance(primeiro, dict):
+                    status = primeiro.get('status', '')
+                elif isinstance(primeiro, str):
+                    status = primeiro
             linha.append(status)
         linhas.append(linha)
     with open(csv_saida, 'w', newline='', encoding='utf-8') as f:
