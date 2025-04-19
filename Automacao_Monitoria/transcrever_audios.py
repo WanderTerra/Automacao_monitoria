@@ -1,4 +1,16 @@
 import os
+import sys
+import re
+import json
+import warnings
+from typing import Dict, Any, Optional
+from pathlib import Path
+from dotenv import load_dotenv
+import openai
+import re
+from openai import OpenAI
+
+
 # Definir todas as variáveis de ambiente possíveis para evitar symlinks
 os.environ["SPEECHBRAIN_DIALOG_STRATEGY"] = "copy"
 os.environ["SPEECHBRAIN_LOCAL_FILE_STRATEGY"] = "copy"
@@ -7,15 +19,8 @@ os.environ["TRANSFORMERS_OFFLINE"] = "0"
 os.environ["HF_HUB_CACHE"] = os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "no_symlinks")
 
 # Hack para forçar SpeechBrain a usar cópia em vez de symlinks
-import sys
-import warnings
-import json
-from typing import Dict, Any, Optional
-
-# Tentar configurar o SpeechBrain diretamente se possível
 try:
     import speechbrain as sb
-    # Sobrescreve a função de link que causa o erro
     import speechbrain.utils.fetching as fetching
     original_link_strategy = fetching.link_with_strategy
     
@@ -31,14 +36,8 @@ try:
     fetching.link_with_strategy = safe_link_strategy
     print("Configuração do SpeechBrain modificada para evitar erros de symlink")
 except ImportError:
-    print("SpeechBrain não encontrado, pulando configuração específica")
+    print("SpeechBrain não está instalado. Algumas funcionalidades podem não estar disponíveis.")
 
-# Importações normais
-import openai
-import re
-from dotenv import load_dotenv
-from pathlib import Path
-from openai import OpenAI
 
 # Carrega as variáveis de ambiente do arquivo .env
 dotenv_path = Path(__file__).parent / '.env'
@@ -159,15 +158,12 @@ except Exception as e:
     print(f"Erro ao inicializar pipeline de diarização: {e}")
     print("Tentando solução alternativa...")
     try:
-        # Tenta uma abordagem alternativa sem usar SpeechBrain diretamente
-        # Este é um fallback caso o método principal falhe
         import tempfile
         import torch
         
         from pyannote.audio.pipelines.utils import get_model
         from pyannote.audio.pipelines.speaker_diarization import SpeakerDiarization
         
-        # Copia manualmente o modelo necessário 
         os.makedirs(os.path.join(os.path.expanduser("~"), ".cache", "torch", "pyannote", "speechbrain"), exist_ok=True)
         
         pipeline = SpeakerDiarization(segmentation="pyannote/segmentation")
@@ -177,13 +173,36 @@ except Exception as e:
         print("AVISO: A diarização não funcionará. O script continuará apenas com transcrição.")
         pipeline = None
 
+def corrigir_portes_advogados(texto):
+    """
+    Corrige variações comuns de transcrição para 'Portes Advogados'.
+    """
+    padroes = [
+        r'partes de advogados',
+        r'porta de advogados',
+        r'parte de advogados',
+        r'portas de advogados',
+        r'portas advogados',
+        r'porta advogados',
+        r'partes advogados',
+        r'porta dos advogados',
+        r'portas dos advogados',
+        r'parte dos advogados',
+        r'partes dos advogados',
+        r'parte da advogados',
+        r'portas da advogados',
+        r'porta da advogados',
+    ]
+    for padrao in padroes:
+        texto = re.sub(padrao, 'Portes Advogados', texto, flags=re.IGNORECASE)
+    return texto
+
 def parse_vtt(vtt_text):
     """
     Analisa o texto VTT e retorna uma lista de segmentos.
     Cada segmento é um dicionário com 'start', 'end' (em segundos) e 'text'.
     """
     segments = []
-    # Expressão regular para capturar linhas de tempo no formato "HH:MM:SS.mmm --> HH:MM:SS.mmm"
     time_pattern = re.compile(r'(\d{2}:\d{2}:\d{2}\.\d{3}) --> (\d{2}:\d{2}:\d{2}\.\d{3})')
     lines = vtt_text.splitlines()
     idx = 0
@@ -192,12 +211,10 @@ def parse_vtt(vtt_text):
         match = time_pattern.match(line)
         if match:
             start_str, end_str = match.groups()
-            # Converte horário para segundos
             start = sum(float(x) * 60 ** i for i, x in enumerate(reversed(start_str.split(":"))))
             end = sum(float(x) * 60 ** i for i, x in enumerate(reversed(end_str.split(":"))))
             text_lines = []
             idx += 1
-            # Junta as linhas seguintes até uma linha em branco
             while idx < len(lines) and lines[idx].strip() != "":
                 text_lines.append(lines[idx].strip())
                 idx += 1
@@ -208,18 +225,12 @@ def parse_vtt(vtt_text):
     return segments
 
 def assign_speaker_to_segment(segment, diarization):
-    """
-    Para cada segmento de transcrição, verifica qual falante (do Pyannote) tem maior sobreposição.
-    Retorna o rótulo do falante.
-    """
     seg_start = segment["start"]
     seg_end = segment["end"]
     max_overlap = 0.0
     speaker_assigned = "Desconhecido"
     
-    # Itera pelos segmentos de diarização; cada item tem (segment, _, speaker)
     for d_segment, _, speaker in diarization.itertracks(yield_label=True):
-        # Calcula a sobreposição em segundos
         overlap = max(0, min(seg_end, d_segment.end) - max(seg_start, d_segment.start))
         if overlap > max_overlap:
             max_overlap = overlap
@@ -227,19 +238,12 @@ def assign_speaker_to_segment(segment, diarization):
     return speaker_assigned
 
 def merge_transcript_and_diarization(vtt_text, diarization):
-    """
-    Mescla a transcrição (VTT) com os segmentos de diarização.
-    Retorna um texto final onde cada segmento é rotulado com o falante.
-    """
     segments = parse_vtt(vtt_text)
     final_lines = []
     for seg in segments:
         speaker = assign_speaker_to_segment(seg, diarization)
-        # Cria uma linha formatada para o segmento:
-        # [hh:mm:ss - hh:mm:ss] Falante: texto
         start_time = seg["start"]
         end_time = seg["end"]
-        # Formata os tempos em hh:mm:ss
         def format_time(s):
             hrs = int(s // 3600)
             mins = int((s % 3600) // 60)
@@ -250,20 +254,8 @@ def merge_transcript_and_diarization(vtt_text, diarization):
     return "\n".join(final_lines)
 
 def classificar_falantes_com_gpt(texto_transcricao):
-    """
-    Usa o modelo GPT-4.1-mini para identificar os falantes como 'Cliente' ou 'Agente'
-    em uma transcrição de áudio.
-    
-    Args:
-        texto_transcricao (str): O texto transcrito do áudio
-        
-    Returns:
-        str: Texto da transcrição com os falantes identificados como Cliente ou Agente
-    """
     try:
         client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        
-        # Instrução clara para o modelo
         prompt = f"""
         Analise esta transcrição de uma ligação de cobrança e identifique quem está falando em cada momento.
         
@@ -286,12 +278,12 @@ def classificar_falantes_com_gpt(texto_transcricao):
         """
         
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",  # Usando o modelo gpt-4.1-mini
+            model="gpt-4.1-mini",
             messages=[
                 {"role": "system", "content": "Você é um assistente especializado em identificar falantes em transcrições de ligações de cobrança."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,  # Temperatura baixa para respostas mais consistentes
+            temperature=0.1,
             max_tokens=4096
         )
         
@@ -299,31 +291,6 @@ def classificar_falantes_com_gpt(texto_transcricao):
     except Exception as e:
         print(f"Erro ao classificar falantes com GPT-4.1-mini: {e}")
         return texto_transcricao
-
-def identificar_falantes_com_gpt41nano(transcricao):
-    """
-    Usa o modelo gpt-4.1-nano para identificar os falantes como 'Agente' e 'Cliente' na transcrição.
-    """
-    client = _get_client()
-    prompt = (
-        "Analise a transcrição de uma ligação de cobrança abaixo. "
-        "Cada linha está no formato [TIMESTAMP] SPEAKER_UNKNOWN: texto. "
-        "Substitua SPEAKER_UNKNOWN por 'Agente' ou 'Cliente' conforme o contexto da conversa. "
-        "O Agente geralmente se apresenta, menciona a empresa, faz perguntas sobre débitos e conduz a negociação. "
-        "O Cliente responde, pode iniciar com 'Alô', perguntar 'quem fala', ou responder às perguntas do Agente. "
-        "Mantenha o formato original, alterando apenas a identificação do falante.\n\n"
-        f"Transcrição:\n{transcricao}"
-    )
-    response = client.chat.completions.create(
-        model="gpt-4.1-nano",
-        messages=[
-            {"role": "system", "content": "Você é um assistente que identifica falantes em transcrições de ligações."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.0,
-        max_tokens=4096
-    )
-    return response.choices[0].message.content.strip()
 
 def process_audio_file(caminho_audio):
     print(f"Transcrevendo com gpt-4o-transcribe: {caminho_audio}...")
@@ -335,7 +302,6 @@ def process_audio_file(caminho_audio):
                 file=audio_file,
                 response_format="text"
             )
-        # Se a resposta for um objeto Transcription, extrai o texto
         if hasattr(transcription_response, 'text'):
             text = transcription_response.text
         elif isinstance(transcription_response, str):
@@ -370,12 +336,13 @@ def process_audio_folder(pasta):
         print(f"Processando: {arquivo}")
         final_text = process_audio_file(caminho_audio)
         if final_text:
-            # Identificar falantes usando o modelo gpt-4.1-nano
+            # Corrigir variações de "Portes Advogados" antes da classificação dos falantes
+            final_text_corrigido = corrigir_portes_advogados(final_text)
             try:
-                final_text_identificado = identificar_falantes_com_gpt41nano(final_text)
+                final_text_identificado = classificar_falantes_com_gpt(final_text_corrigido)
             except Exception as e:
                 print(f"Erro ao identificar falantes com gpt-4.1-nano: {e}")
-                final_text_identificado = final_text
+                final_text_identificado = final_text_corrigido
             nome_txt = os.path.splitext(arquivo)[0] + '_diarizado.txt'
             caminho_txt = os.path.join(pasta_transcricoes, nome_txt)
             with open(caminho_txt, 'w', encoding='utf-8') as f:
@@ -403,23 +370,14 @@ def process_audio_folder(pasta):
                 print(f"Erro ao mover o arquivo com falha: {move_error}")
 
 def format_time_now():
-    """Retorna a data e hora atual formatadas"""
     from datetime import datetime
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def process_transcription_folder(pasta_transcricoes):
-    """
-    Processa as transcrições na pasta de transcrições, avalia-as e move para pasta de avaliadas.
-    
-    Args:
-        pasta_transcricoes (str): Caminho da pasta com as transcrições
-    """
-    # Verificando se a pasta existe
     if not os.path.exists(pasta_transcricoes):
         print(f"Pasta de transcrições não encontrada: {pasta_transcricoes}")
         return
     
-    # Criar pasta para transcrições avaliadas e pasta de erros
     pasta_transcricoes_avaliadas = os.path.join(pasta_transcricoes, 'Transcrições_avaliadas')
     pasta_transcricoes_erros = os.path.join(pasta_transcricoes, 'Transcrições_erros')
     
@@ -429,7 +387,6 @@ def process_transcription_folder(pasta_transcricoes):
     print(f"Pasta para transcrições avaliadas: {pasta_transcricoes_avaliadas}")
     print(f"Pasta para transcrições com erro: {pasta_transcricoes_erros}")
     
-    # Obter todas as transcrições (arquivos .txt)
     arquivos_txt = [f for f in os.listdir(pasta_transcricoes) if f.endswith('.txt') and os.path.isfile(os.path.join(pasta_transcricoes, f))]
     
     if not arquivos_txt:
@@ -440,42 +397,35 @@ def process_transcription_folder(pasta_transcricoes):
     
     for arquivo in arquivos_txt:
         caminho_transcricao = os.path.join(pasta_transcricoes, arquivo)
-        id_chamada = os.path.splitext(arquivo)[0]  # Usa o nome do arquivo sem extensão como ID
+        id_chamada = os.path.splitext(arquivo)[0]
         
         print(f"Avaliando transcrição: {arquivo}")
         
         try:
-            # Ler o conteúdo da transcrição
             with open(caminho_transcricao, 'r', encoding='utf-8') as f:
                 conteudo_transcricao = f.read()
             
-            # Avaliar a transcrição
             avaliacao = avaliar_ligacao(conteudo_transcricao, id_chamada=id_chamada)
-            # Redistribuir pesos e pontuação se houver N/A
             if 'itens' in avaliacao:
                 resultado_redistribuido = redistribuir_pesos_e_pontuacao(avaliacao['itens'])
                 avaliacao['itens'] = resultado_redistribuido['itens']
                 avaliacao['pontuacao_total'] = resultado_redistribuido['pontuacao_total']
                 avaliacao['pontuacao_percentual'] = resultado_redistribuido['pontuacao_percentual']
             
-            # Criar nome para o arquivo de avaliação
             nome_avaliacao = f"{id_chamada}_avaliacao.json"
             caminho_avaliacao = os.path.join(pasta_transcricoes_avaliadas, nome_avaliacao)
             
-            # Salvar a avaliação em formato JSON
             with open(caminho_avaliacao, 'w', encoding='utf-8') as f:
                 json.dump(avaliacao, f, ensure_ascii=False, indent=2)
             
             print(f"Avaliação salva em: {caminho_avaliacao}")
             
-            # Mover a transcrição avaliada
             caminho_destino = os.path.join(pasta_transcricoes_avaliadas, arquivo)
             import shutil
-            shutil.copy2(caminho_transcricao, caminho_destino)  # Copia preservando metadados
-            os.remove(caminho_transcricao)  # Remove o arquivo original
+            shutil.copy2(caminho_transcricao, caminho_destino)
+            os.remove(caminho_transcricao)
             print(f"Transcrição movida para: {caminho_destino}")
             
-            # Criar um relatório de resumo em texto
             nota = avaliacao.get('pontuacao_percentual', 0)
             status = "APROVADA" if nota >= 70 else "REPROVADA"
             
@@ -488,7 +438,6 @@ def process_transcription_folder(pasta_transcricoes):
                 f.write(f"Pontuação: {nota:.2f}%\n\n")
                 f.write("Itens avaliados:\n")
                 
-                # Percorrer os itens de avaliação do JSON
                 for categoria, itens in avaliacao.get('itens', {}).items():
                     f.write(f"\n{categoria}:\n")
                     for item_nome, item_info in itens.items():
@@ -502,15 +451,13 @@ def process_transcription_folder(pasta_transcricoes):
         except Exception as e:
             print(f"Erro ao processar {arquivo}: {e}")
             
-            # Mover transcrição para pasta de erros
             try:
                 import shutil
                 caminho_destino_erro = os.path.join(pasta_transcricoes_erros, arquivo)
                 shutil.copy2(caminho_transcricao, caminho_destino_erro)
-                os.remove(caminho_transcricao)  # Remove o arquivo original
+                os.remove(caminho_transcricao)
                 print(f"Transcrição movida para pasta de erros: {caminho_destino_erro}")
                 
-                # Criar um arquivo de log explicando o erro
                 log_path = os.path.join(pasta_transcricoes_erros, f"{id_chamada}_erro.txt")
                 with open(log_path, 'w', encoding='utf-8') as log_file:
                     log_file.write(f"Erro ao avaliar a transcrição {arquivo}\n")
@@ -520,23 +467,12 @@ def process_transcription_folder(pasta_transcricoes):
             except Exception as move_error:
                 print(f"Erro ao mover a transcrição com falha: {move_error}")
 
-# ─── FUNÇÃO PARA AVALIAR LIGAÇÕES ──────────────────────────────────────────────
 def avaliar_ligacao(transcricao: str, *, 
                     id_chamada: str = "chamada‑sem‑id") -> Dict[str, Any]:
-    """
-    Envia a transcrição ao modelo GPT-4.1-nano e devolve o JSON de avaliação.
-
-    :param transcricao: Texto completo da ligação (turnos não precisam estar
-                        separados, mas ajuda manter "Agente: / Cliente:").
-    :param id_chamada:  Identificador que será inserido no campo `"id_chamada"`.
-    :return:           dicionário Python com o resultado.
-    :raises RuntimeError: se a resposta não for JSON válido.
-    """
     client = _get_client()
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        # O id_chamada é passado como anotação no usuário para o modelo preencher
         {"role": "user",
          "content": f"ID_CHAMADA={id_chamada}\n\nTRANSCRICAO:\n{transcricao}"}
     ]
@@ -545,11 +481,10 @@ def avaliar_ligacao(transcricao: str, *,
     response = client.chat.completions.create(
         model="gpt-4.1-nano",  
         messages=messages,
-        temperature=0.0,      # queremos avaliação consistente
-        max_tokens=1024       # ajuste conforme necessidade
+        temperature=0.0,
+        max_tokens=1024
     )
 
-    # O modelo deve responder TODO o JSON num único bloco
     assistant_content = response.choices[0].message.content.strip()
 
     try:
@@ -564,42 +499,33 @@ def avaliar_ligacao(transcricao: str, *,
         raise RuntimeError(error_msg) from e
 
 def redistribuir_pesos_e_pontuacao(itens: dict) -> dict:
-    """
-    Redistribui os pesos das categorias ignorando as que receberam 'N/A',
-    garantindo que a soma dos pesos das categorias válidas (Conforme + Não Conforme) seja 1.0 (100%).
-    A pontuação final é a soma dos pesos das categorias marcadas como 'Conforme'.
-    """
     subitens = []
     for categoria, subdict in itens.items():
         for nome, info in subdict.items():
             subitens.append((categoria, nome, info))
-    # Filtrar subitens válidos (não N/A)
     subitens_validos = [s for s in subitens if s[2].get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']]
     n_validos = len(subitens_validos)
     if n_validos == 0:
-        return itens  # Evita divisão por zero
+        return itens
     peso_redistribuido = 1.0 / n_validos
-    # Atribuir novo peso para cada subitem válido e zerar para N/A
     for categoria, nome, info in subitens:
         if info.get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']:
             info['peso'] = round(peso_redistribuido, 4)
         else:
             info['peso'] = 0.0
-    # Calcular pontuação total redistribuída (só soma os 'Conforme')
     pontuacao_total = 0.0
     for categoria, nome, info in subitens:
         if info.get('status', '').strip().upper() == 'CONFORME':
             pontuacao_total += info['peso']
     return {
         'itens': itens,
-        'pontuacao_total': round(pontuacao_total * 10, 2),  # nota de 0 a 10
-        'pontuacao_percentual': round(pontuacao_total * 100, 1)  # nota de 0 a 100
+        'pontuacao_total': round(pontuacao_total * 10, 2),
+        'pontuacao_percentual': round(pontuacao_total * 100, 1)
     }
 
 def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
     import csv
     import re
-    # Cabeçalhos das categorias principais do relatório
     categorias_relatorio = [
         'Abordagem',
         'Segurança',
@@ -646,7 +572,6 @@ def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
                 elif isinstance(primeiro, str):
                     status = primeiro
             linha.append(status)
-        # Adiciona a pontuação percentual ao final da linha
         linha.append(dados.get('pontuacao_percentual', ''))
         linhas.append(linha)
     with open(csv_saida, 'w', newline='', encoding='utf-8') as f:
@@ -663,7 +588,7 @@ def calcular_duracao_audio_wav(caminho_audio):
             frames = wf.getnframes()
             rate = wf.getframerate()
             duracao = frames / float(rate)
-            return duracao  # em segundos
+            return duracao
     except Exception as e:
         print(f"Erro ao calcular duração de {caminho_audio}: {e}")
         return 0
@@ -678,18 +603,15 @@ def gerar_relatorio_gastos(pasta_audios, pasta_transcricoes, relatorio_saida,
     import re
     from datetime import datetime
     
-    # Busca todos os áudios processados
     arquivos_audio = glob.glob(os.path.join(pasta_audios, 'Audios_transcritos', '*.wav'))
     arquivos_audio += glob.glob(os.path.join(pasta_audios, 'Audios_transcritos', '*.mp3'))
     arquivos_audio += glob.glob(os.path.join(pasta_audios, 'Audios_transcritos', '*.m4a'))
     arquivos_audio += glob.glob(os.path.join(pasta_audios, 'Audios_transcritos', '*.flac'))
     arquivos_audio += glob.glob(os.path.join(pasta_audios, 'Audios_transcritos', '*.ogg'))
     
-    # Busca avaliações
     pasta_avaliacoes = os.path.join(pasta_transcricoes, 'Transcrições_avaliadas')
     arquivos_json = glob.glob(os.path.join(pasta_avaliacoes, '*_avaliacao.json'))
     
-    # Monta índice de avaliações por nome base
     avaliacoes = {}
     for caminho_json in arquivos_json:
         nome_base = os.path.basename(caminho_json).split('_avaliacao.json')[0]
@@ -702,22 +624,17 @@ def gerar_relatorio_gastos(pasta_audios, pasta_transcricoes, relatorio_saida,
     for caminho_audio in arquivos_audio:
         nome_audio = os.path.basename(caminho_audio)
         nome_base = os.path.splitext(nome_audio)[0]
-        # Extrair data, agente, fila
         m = re.match(r'(\d{8})_\d{6}_Agente_(\d+)_Fila_(.+)', nome_base)
         if m:
             data_str, agente, fila = m.groups()
             data_fmt = f"{data_str[:4]}-{data_str[4:6]}-{data_str[6:]}"
         else:
             data_fmt, agente, fila = '', '', ''
-        # Duração
         duracao_seg = calcular_duracao_audio_wav(caminho_audio)
         duracao_min = duracao_seg / 60
-        # Custo transcrição
         custo_transcricao = duracao_min * preco_min_transcricao
-        # Custo avaliação (se houver avaliação)
         nome_base_aval = nome_base + '_diarizado' if (nome_base + '_diarizado') in avaliacoes else nome_base
         custo_avaliacao = preco_avaliacao_por_chamada if nome_base_aval in avaliacoes else 0
-        # Total
         custo_total = custo_transcricao + custo_avaliacao
         total_transcricao += custo_transcricao
         total_avaliacao += custo_avaliacao
@@ -729,19 +646,16 @@ def gerar_relatorio_gastos(pasta_audios, pasta_transcricoes, relatorio_saida,
             f"${custo_avaliacao:.4f}",
             f"${custo_total:.4f}"
         ])
-    # Cabeçalhos
     campos = [
         'arquivo', 'data', 'agente', 'fila', 'duração_min',
         f'custo_transcricao_{modelo_transcricao}_usd',
         f'custo_avaliacao_{modelo_avaliacao}_usd',
         'custo_total_usd'
     ]
-    # Escreve CSV
     with open(relatorio_saida, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow(campos)
         writer.writerows(linhas)
-        # Linha de totais
         writer.writerow(['TOTAL', '', '', '', '',
                          f"${total_transcricao:.4f}",
                          f"${total_avaliacao:.4f}",
@@ -751,19 +665,15 @@ def gerar_relatorio_gastos(pasta_audios, pasta_transcricoes, relatorio_saida,
 if __name__ == '__main__':
     pasta_audios = r'C:\Users\wanderley.terra\Documents\Audios_monitoria'
     
-    # Processar os áudios primeiro
     process_audio_folder(pasta_audios)
     
-    # Depois processar as transcrições para avaliação
     pasta_transcricoes = os.path.join(pasta_audios, 'Transcrições_aguas')
     process_transcription_folder(pasta_transcricoes)
     
-    # Gerar relatório consolidado em CSV
     pasta_avaliacoes = os.path.join(pasta_transcricoes, 'Transcrições_avaliadas')
     csv_saida = os.path.join(pasta_avaliacoes, 'relatorio_avaliacoes.csv')
     gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida)
     
-    # Gerar relatório de gastos
     relatorio_gastos_saida = os.path.join(pasta_audios, 'relatorio_gastos.csv')
     gerar_relatorio_gastos(
         pasta_audios=pasta_audios,
