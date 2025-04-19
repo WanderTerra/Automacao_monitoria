@@ -265,20 +265,22 @@ def classificar_falantes_com_gpt(texto_transcricao):
         - O Agente conduz a conversa fazendo perguntas sobre pagamentos
         - O Cliente geralmente responde às perguntas do agente
         - O Cliente pode alegar que já saiu do lugar de onde está sendo cobrado, por isso não reconhece a dívida
-        
+        - O Agente agenda o retorno, confirma o pagamento, e reforça a data-limite e as condições
+        - O Agente forneçe informações sobre o pagamento, como valores, descontos e parcelas
         
         Formato da transcrição original:
         [TIMESTAMP] SPEAKER_ID: texto da fala
         
-        Substitua SPEAKER_ID por "Cliente" ou "Agente" baseado no contexto da conversa.
-        Mantenha exatamente o mesmo texto e formato, mudando apenas a identificação do falante.
+        Reescreva a transcrição no seguinte formato, SEMPRE na mesma linha:
+        Agente: frase da fala do agente
+        Cliente: frase da fala do cliente
+        (Ou seja, cada linha deve começar com 'Agente:' ou 'Cliente:' seguido da fala, sem linhas separadas para o nome do falante e a fala, e sem texto extra.)
         
         Transcrição:
         {texto_transcricao}
         """
-        
         response = client.chat.completions.create(
-            model="gpt-4.1-mini",
+            model="gpt-4.1-nano",
             messages=[
                 {"role": "system", "content": "Você é um assistente especializado em identificar falantes em transcrições de ligações de cobrança."},
                 {"role": "user", "content": prompt}
@@ -286,10 +288,9 @@ def classificar_falantes_com_gpt(texto_transcricao):
             temperature=0.1,
             max_tokens=4096
         )
-        
-        return response.choices[0].message.content
+        return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Erro ao classificar falantes com GPT-4.1-mini: {e}")
+        print(f"Erro ao classificar falantes com GPT-4.1-nano: {e}")
         return texto_transcricao
 
 def process_audio_file(caminho_audio):
