@@ -1,14 +1,14 @@
-import os
-import sys
-import re
 import json
-import warnings
-from typing import Dict, Any, Optional
+import os
+import re
+import sys
+import time
 from pathlib import Path
+from typing import Any, Dict, Optional
 from dotenv import load_dotenv
 import openai
-import re
 from openai import OpenAI
+from pydub.utils import mediainfo
 
 
 # Definir todas as variáveis de ambiente possíveis para evitar symlinks
@@ -117,34 +117,111 @@ CHECKLIST DE MONITORIA  (pesos)
 
 REGRAS DE CONFORMIDADE DO SCRIPT ÁGUAS GUARIOBA
 ✔ Identificar‑se com NOME + "Portes Advogados assessoria jurídica das Águas Guariroba"
-✔ Confirmar nome/CPF e endereço antes da negociação
+✔ Confirmar nome ou CPF e endereço antes da negociação
 ✔ Ofertar valor total, valor com desconto, entrada e parcelas ≥ R$ 20,00
 ✔ Perguntar se o número tem WhatsApp antes de enviar boleto
 ✔ Reforçar: "pagamento até X às 18h ou perderá o desconto"
 
 MODELO DE SAÍDA
-        {{
-        "id_chamada": "...",
-        "avaliador": "MonitorGPT",
-        "itens": {{
-            "Abordagem": {{
-            "Atendeu prontamente": {{
-                "status": "Conforme|Não Conforme|N/A",
-                "peso": 0.25,
-                "observacao": "texto livre curto"
-            }}
-            }},
-            ...
-            "Falha Critica": {{
-            "Sem falha crítica": {{
-                "status": "Conforme|Não Conforme",
-                "peso": 0
-            }}
-            }}
-        }},
-        "pontuacao_total": 0‑10,
-        "pontuacao_percentual": 0‑100
-        }}
+{{
+  "id_chamada": "...",
+  "avaliador": "MonitorGPT",
+  "itens": {{
+    "Abordagem": {{
+      "Atendeu prontamente": {{
+        "status": "Conforme|Não Conforme",
+        "peso": 0.25,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Segurança": {{
+      "Conduziu o atendimento com segurança, sem informações falsas": {{
+        "status": "Conforme|Não Conforme",
+        "peso": 0.5,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Fraseologia de Momento e Retorno": {{
+      "Explicou motivo de ausência/transferência": {{
+        "status": "Conforme|Não Conforme|N/A",
+        "peso": 0.4,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Comunicação": {{
+      "Tom de voz adequado, linguagem clara (pode ser informal), sem gírias": {{
+        "status": "Conforme|Não Conforme",
+        "peso": 0.5,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Cordialidade": {{
+      "Tratou o cliente com respeito, sem comentários impróprios": {{
+        "status": "Conforme|Não Conforme",
+        "peso": 0.4,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Empatia": {{
+      "Demonstrou empatia genuína": {{
+        "status": "Conforme|Não Conforme",
+        "peso": 0.4,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Escuta Ativa": {{
+      "Ouviu sem interromper, retomando pontos": {{
+        "status": "Conforme|Não Conforme",
+        "peso": 0.4,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Clareza & Objetividade": {{
+      "Explicações diretas, sem rodeios": {{
+        "status": "Conforme|Não Conforme",
+        "peso": 0.4,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Oferta de Solução & Condições": {{
+      "Apresentou valores, descontos e opções corretamente": {{
+        "status": "Conforme|Não Conforme|N/A",
+        "peso": 0.4,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Confirmação de Aceite": {{
+      "Confirmou negociação com 'sim, aceito/confirmo'": {{
+        "status": "Conforme|Não Conforme|N/A",
+        "peso": 0.4,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Reforço de Prazo & Condições": {{
+      "Reforçou data‑limite e perda de desconto": {{
+        "status": "Conforme|Não Conforme|N/A",
+        "peso": 0.4,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Encerramento": {{
+      "Perguntou 'Posso ajudar em algo mais?' e agradeceu": {{
+        "status": "Conforme|Não Conforme|N/A",
+        "peso": 0.4,
+        "observacao": "texto livre curto"
+      }}
+    }},
+    "Falha Critica": {{
+      "Sem falha crítica": {{
+        "status": "Conforme|Não Conforme",
+        "peso": 0,
+        "observacao": "texto livre curto"
+      }}
+    }}
+  }},
+  "pontuacao_total": 0-10,
+  "pontuacao_percentual": 0-100
+}}
 NÃO retorne NENHUM valor de subitem como string simples. Siga exatamente o modelo acima.
 Não adicione nada fora desse JSON.
 """
@@ -192,6 +269,12 @@ def corrigir_portes_advogados(texto):
         r'parte da advogados',
         r'portas da advogados',
         r'porta da advogados',
+        r'porta advogada',
+        r'portas advogadas',
+        r'parte advogada',
+        r'porta de advogado',
+        r'portas de advogado',
+        r'parte de advogado',
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Portes Advogados', texto, flags=re.IGNORECASE)
@@ -261,6 +344,9 @@ def classificar_falantes_com_gpt(texto_transcricao):
         
         Regras para identificar os falantes:
         - O Cliente geralmente inicia com "Alô", pergunta "quem é" ou "quem fala", e responde às perguntas
+        - O Agente pergunta o nome do cliente. Ex:'Boa tarde, falo com a Giovana?' ou 'Falo com Raimundo?'
+        - O Cliente pergunta o valor da dívida'
+        - O Agente informa o valor da dívida'
         - O Agente geralmente se apresenta, dá bom dia, menciona a empresa, explica sobre débitos/cobranças
         - O Agente conduz a conversa fazendo perguntas sobre pagamentos
         - O Cliente geralmente responde às perguntas do agente
@@ -280,7 +366,7 @@ def classificar_falantes_com_gpt(texto_transcricao):
         {texto_transcricao}
         """
         response = client.chat.completions.create(
-            model="gpt-4.1-nano",
+            model="gpt-4.1-mini",
             messages=[
                 {"role": "system", "content": "Você é um assistente especializado em identificar falantes em transcrições de ligações de cobrança."},
                 {"role": "user", "content": prompt}
@@ -290,7 +376,7 @@ def classificar_falantes_com_gpt(texto_transcricao):
         )
         return response.choices[0].message.content.strip()
     except Exception as e:
-        print(f"Erro ao classificar falantes com GPT-4.1-nano: {e}")
+        print(f"Erro ao classificar falantes com GPT-4.1-mini: {e}")
         return texto_transcricao
 
 def process_audio_file(caminho_audio):
@@ -335,6 +421,7 @@ def process_audio_folder(pasta):
     for arquivo in arquivos:
         caminho_audio = os.path.join(pasta, arquivo)
         print(f"Processando: {arquivo}")
+        tempo_inicio = time.time()  # Marca o início do processamento do áudio
         final_text = process_audio_file(caminho_audio)
         if final_text:
             # Corrigir variações de "Portes Advogados" antes da classificação dos falantes
@@ -356,6 +443,9 @@ def process_audio_folder(pasta):
                 print(f"Arquivo de áudio movido para: {caminho_destino}")
             except Exception as e:
                 print(f"Erro ao mover o arquivo de áudio: {e}")
+            # Salva o tempo de início do processamento para uso posterior
+            with open(caminho_txt + '.start', 'w') as f:
+                f.write(str(tempo_inicio))
         else:
             caminho_erro = os.path.join(pasta_erros, arquivo)
             try:
@@ -427,6 +517,10 @@ def process_transcription_folder(pasta_transcricoes):
             os.remove(caminho_transcricao)
             print(f"Transcrição movida para: {caminho_destino}")
             
+            # Salva o tempo de término do processamento para uso posterior
+            with open(caminho_avaliacao + '.end', 'w') as f:
+                f.write(str(time.time()))
+            
             nota = avaliacao.get('pontuacao_percentual', 0)
             status = "APROVADA" if nota >= 70 else "REPROVADA"
             
@@ -480,7 +574,7 @@ def avaliar_ligacao(transcricao: str, *,
 
     print(f"Avaliando ligação: {id_chamada}")
     response = client.chat.completions.create(
-        model="gpt-4.1-nano",  
+        model="gpt-4.1-mini",  
         messages=messages,
         temperature=0.0,
         max_tokens=1024
@@ -500,24 +594,38 @@ def avaliar_ligacao(transcricao: str, *,
         raise RuntimeError(error_msg) from e
 
 def redistribuir_pesos_e_pontuacao(itens: dict) -> dict:
+    """
+    Redistribui os pesos das categorias ignorando as que receberam 'N/A' e o item 'Falha Critica'.
+    Se 'Falha Critica' for 'Não Conforme', a nota é 0%. Caso contrário, a nota é calculada normalmente.
+    """
     subitens = []
+    falha_critica_nao_conforme = False
     for categoria, subdict in itens.items():
         for nome, info in subdict.items():
+            # Detecta Falha Critica Não Conforme
+            if categoria.strip().lower() == 'falha critica' and info.get('status', '').strip().upper() == 'NÃO CONFORME':
+                falha_critica_nao_conforme = True
             subitens.append((categoria, nome, info))
-    subitens_validos = [s for s in subitens if s[2].get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']]
+    # Filtrar subitens válidos (não N/A e não Falha Critica)
+    subitens_validos = [s for s in subitens if s[0].strip().lower() != 'falha critica' and s[2].get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']]
     n_validos = len(subitens_validos)
     if n_validos == 0:
         return itens
     peso_redistribuido = 1.0 / n_validos
+    # Atribuir novo peso para cada subitem válido e zerar para N/A e Falha Critica
     for categoria, nome, info in subitens:
-        if info.get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']:
+        if categoria.strip().lower() != 'falha critica' and info.get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']:
             info['peso'] = round(peso_redistribuido, 4)
         else:
             info['peso'] = 0.0
+    # Calcular pontuação total redistribuída (só soma os 'Conforme', exceto Falha Critica)
     pontuacao_total = 0.0
     for categoria, nome, info in subitens:
-        if info.get('status', '').strip().upper() == 'CONFORME':
+        if categoria.strip().lower() != 'falha critica' and info.get('status', '').strip().upper() == 'CONFORME':
             pontuacao_total += info['peso']
+    # Se Falha Critica for Não Conforme, zera a nota
+    if falha_critica_nao_conforme:
+        pontuacao_total = 0.0
     return {
         'itens': itens,
         'pontuacao_total': round(pontuacao_total * 10, 2),
@@ -581,15 +689,11 @@ def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
         writer.writerows(linhas)
     print(f"CSV consolidado gerado em: {csv_saida}")
 
-import wave
-
-def calcular_duracao_audio_wav(caminho_audio):
+def calcular_duracao_audio_robusto(caminho_audio):
     try:
-        with wave.open(caminho_audio, 'rb') as wf:
-            frames = wf.getnframes()
-            rate = wf.getframerate()
-            duracao = frames / float(rate)
-            return duracao
+        info = mediainfo(caminho_audio)
+        duracao = float(info['duration'])
+        return duracao  # em segundos
     except Exception as e:
         print(f"Erro ao calcular duração de {caminho_audio}: {e}")
         return 0
@@ -623,15 +727,20 @@ def gerar_relatorio_gastos(pasta_audios, pasta_transcricoes, relatorio_saida,
     total_avaliacao = 0
     total_geral = 0
     for caminho_audio in arquivos_audio:
+        if not os.path.exists(caminho_audio):
+            print(f"Arquivo não encontrado, pulando: {caminho_audio}")
+            continue
         nome_audio = os.path.basename(caminho_audio)
         nome_base = os.path.splitext(nome_audio)[0]
         m = re.match(r'(\d{8})_\d{6}_Agente_(\d+)_Fila_(.+)', nome_base)
         if m:
             data_str, agente, fila = m.groups()
+            # Remover extensão da fila, se houver
+            fila = os.path.splitext(fila)[0]
             data_fmt = f"{data_str[:4]}-{data_str[4:6]}-{data_str[6:]}"
         else:
             data_fmt, agente, fila = '', '', ''
-        duracao_seg = calcular_duracao_audio_wav(caminho_audio)
+        duracao_seg = calcular_duracao_audio_robusto(caminho_audio)
         duracao_min = duracao_seg / 60
         custo_transcricao = duracao_min * preco_min_transcricao
         nome_base_aval = nome_base + '_diarizado' if (nome_base + '_diarizado') in avaliacoes else nome_base
@@ -640,18 +749,35 @@ def gerar_relatorio_gastos(pasta_audios, pasta_transcricoes, relatorio_saida,
         total_transcricao += custo_transcricao
         total_avaliacao += custo_avaliacao
         total_geral += custo_total
+        # Busca tempo de processamento
+        tempo_processamento = ''
+        caminho_txt = os.path.join(pasta_transcricoes, nome_base + '_diarizado.txt')
+        caminho_start = caminho_txt + '.start'
+        caminho_avaliacao = os.path.join(pasta_transcricoes, 'Transcrições_avaliadas', nome_base + '_diarizado_avaliacao.json')
+        caminho_end = caminho_avaliacao + '.end'
+        try:
+            if os.path.exists(caminho_start) and os.path.exists(caminho_end):
+                with open(caminho_start) as f:
+                    t_start = float(f.read().strip())
+                with open(caminho_end) as f:
+                    t_end = float(f.read().strip())
+                tempo_processamento = t_end - t_start
+        except Exception as e:
+            tempo_processamento = ''
         linhas.append([
             nome_audio, data_fmt, agente, fila.replace('_', ' '),
             f"{duracao_min:.2f}",
             f"${custo_transcricao:.4f}",
             f"${custo_avaliacao:.4f}",
-            f"${custo_total:.4f}"
+            f"${custo_total:.4f}",
+            f"{tempo_processamento:.2f}" if tempo_processamento != '' else ''
         ])
     campos = [
         'arquivo', 'data', 'agente', 'fila', 'duração_min',
         f'custo_transcricao_{modelo_transcricao}_usd',
         f'custo_avaliacao_{modelo_avaliacao}_usd',
-        'custo_total_usd'
+        'custo_total_usd',
+        'tempo_processamento_segundos'
     ]
     with open(relatorio_saida, 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
