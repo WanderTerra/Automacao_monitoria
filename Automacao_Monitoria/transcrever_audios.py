@@ -3,13 +3,18 @@ import os
 import re
 import sys
 import time
+import csv
+import glob
+import shutil
+import tempfile
 from pathlib import Path
+from datetime import datetime
 from typing import Any, Dict, Optional
+
 from dotenv import load_dotenv
 import openai
 from openai import OpenAI
 from pydub.utils import mediainfo
-
 
 # Definir todas as variáveis de ambiente possíveis para evitar symlinks
 os.environ["SPEECHBRAIN_DIALOG_STRATEGY"] = "copy"
@@ -275,6 +280,8 @@ def corrigir_portes_advogados(texto):
         r'porta de advogado',
         r'portas de advogado',
         r'parte de advogado',
+        r'pai dos Advogados',
+        r'porto Advogados'
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Portes Advogados', texto, flags=re.IGNORECASE)
@@ -387,7 +394,9 @@ def process_audio_file(caminho_audio):
             transcription_response = client.audio.transcriptions.create(
                 model="gpt-4o-transcribe",
                 file=audio_file,
-                response_format="text"
+                response_format="text",
+                prompt="Transcreva esta chamada completa entre um agente da Portes Advogados e um cliente",
+                temperature=0.0  # Mais consistente
             )
         if hasattr(transcription_response, 'text'):
             text = transcription_response.text
@@ -397,6 +406,15 @@ def process_audio_file(caminho_audio):
             print(f"Formato de resposta desconhecido: {type(transcription_response)}")
             print(f"Conteúdo: {transcription_response}")
             return None
+        
+        # Verificar se a transcrição parece muito curta em relação ao áudio
+        duracao = calcular_duracao_audio_robusto(caminho_audio)
+        if duracao > 60:  # Só verifica áudios com mais de 1 minuto
+            n_palavras = len(text.split())
+            taxa_palavras = n_palavras / duracao
+            if taxa_palavras < 1.5:  # Menos de 1.5 palavras por segundo é suspeito
+                print(f"ALERTA: Transcrição potencialmente incompleta: {n_palavras} palavras em {duracao:.1f}s ({taxa_palavras:.2f} palavras/seg)")
+        
         print("Transcrição concluída!")
         return text
     except Exception as e:
@@ -698,6 +716,97 @@ def calcular_duracao_audio_robusto(caminho_audio):
         print(f"Erro ao calcular duração de {caminho_audio}: {e}")
         return 0
 
+def verificar_transcricoes_incompletas(pasta_audios, pasta_transcricoes):
+    """
+    Percorre todos os áudios e transcrições, compara duração do áudio e tamanho da transcrição.
+    Alerta se a transcrição parecer muito curta em relação ao áudio.
+    """
+    pasta_audios_transcritos = os.path.join(pasta_audios, 'Audios_transcritos')
+    pasta_transcricoes = os.path.join(pasta_transcricoes)
+    
+    print("\n=== VERIFICANDO POSSÍVEIS TRANSCRIÇÕES INCOMPLETAS ===")
+    
+    # Encontrar todos os arquivos de áudio
+    extensoes_audio = ['.mp3', '.wav', '.m4a', '.ogg', '.flac']
+    arquivos_audio = []
+    for ext in extensoes_audio:
+        arquivos_audio += glob.glob(os.path.join(pasta_audios_transcritos, f'*{ext}'))
+    
+    if not arquivos_audio:
+        print("Nenhum áudio transcrito encontrado para verificação.")
+        return
+    
+    problemas_encontrados = 0
+    relatorio = []
+    
+    for caminho_audio in arquivos_audio:
+        nome_base = os.path.splitext(os.path.basename(caminho_audio))[0]
+        caminho_txt = os.path.join(pasta_transcricoes, nome_base + '_diarizado.txt')
+        
+        if not os.path.exists(caminho_txt):
+            msg = f"ERRO: Transcrição não encontrada para: {nome_base}"
+            print(msg)
+            relatorio.append({
+                'arquivo': nome_base,
+                'problema': 'Transcrição não encontrada',
+                'duracao_audio': 'N/A',
+                'palavras': 0,
+                'taxa_palavras_seg': 0
+            })
+            problemas_encontrados += 1
+            continue
+        
+        duracao = calcular_duracao_audio_robusto(caminho_audio)
+        
+        with open(caminho_txt, 'r', encoding='utf-8') as f:
+            texto = f.read()
+        
+        # Calcula estatísticas
+        n_palavras = len(texto.split())
+        n_caracteres = len(texto)
+        taxa_palavras = n_palavras / duracao if duracao > 0 else 0
+        
+        # Heurísticas para detectar possíveis transcrições incompletas:
+        # 1. Menos de 1.5 palavras por segundo (ligação normal tem ~2-3 palavras/seg)
+        # 2. Menos de 9 caracteres por segundo
+        # 3. Áudio longo (>60s) com menos de 100 palavras
+        
+        problema = None
+        if duracao > 60 and n_palavras < 100:
+            problema = f"Áudio de {duracao:.1f}s tem apenas {n_palavras} palavras"
+        elif duracao > 0 and taxa_palavras < 1.5:
+            problema = f"Taxa baixa: {taxa_palavras:.2f} palavras/seg"
+        elif duracao > 0 and (n_caracteres / duracao) < 9:
+            problema = f"Poucos caracteres por segundo: {(n_caracteres/duracao):.2f}"
+            
+        if problema:
+            print(f"ALERTA: Possível transcrição incompleta: {nome_base}")
+            print(f"  Duração: {duracao:.1f}s, Palavras: {n_palavras}, Taxa: {taxa_palavras:.2f} palavras/seg")
+            print(f"  Problema: {problema}")
+            relatorio.append({
+                'arquivo': nome_base,
+                'problema': problema,
+                'duracao_audio': f"{duracao:.1f}",
+                'palavras': n_palavras,
+                'taxa_palavras_seg': f"{taxa_palavras:.2f}"
+            })
+            problemas_encontrados += 1
+    
+    # Gera relatório CSV se houver problemas
+    if problemas_encontrados > 0:
+        relatorio_csv = os.path.join(pasta_audios, 'relatorio_transcricoes_incompletas.csv')
+        with open(relatorio_csv, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=['arquivo', 'problema', 'duracao_audio', 'palavras', 'taxa_palavras_seg'])
+            writer.writeheader()
+            for linha in relatorio:
+                writer.writerow(linha)
+        print(f"\nEncontrados {problemas_encontrados} possíveis problemas de transcrição.")
+        print(f"Relatório detalhado salvo em: {relatorio_csv}")
+    else:
+        print("\nNenhum problema de transcrição detectado!")
+
+    return problemas_encontrados
+
 def gerar_relatorio_gastos(pasta_audios, pasta_transcricoes, relatorio_saida,
                           modelo_transcricao='gpt-4o-transcribe',
                           preco_min_transcricao=0.006,
@@ -811,5 +920,8 @@ if __name__ == '__main__':
         modelo_avaliacao='gpt-4.1-nano',
         preco_avaliacao_por_chamada=0.002
     )
+    
+    # Executar verificação de transcrições incompletas ao final do processo
+    verificar_transcricoes_incompletas(pasta_audios, pasta_transcricoes)
     
     print("Processamento completo!")
