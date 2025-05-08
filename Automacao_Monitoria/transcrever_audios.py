@@ -898,30 +898,54 @@ def gerar_relatorio_gastos(pasta_audios, pasta_transcricoes, relatorio_saida,
                          f"${total_geral:.4f}"])
     print(f"Relatório de gastos gerado em: {relatorio_saida}")
 
+class CarteiraConfig:
+    def __init__(self, nome, pasta_audios, pasta_transcricoes, prompt_avaliacao):
+        self.nome = nome
+        self.pasta_audios = pasta_audios
+        self.pasta_transcricoes = pasta_transcricoes
+        self.prompt_avaliacao = prompt_avaliacao
+
+class ProcessadorCarteira:
+    def __init__(self, config: CarteiraConfig):
+        self.config = config
+        os.makedirs(self.config.pasta_audios, exist_ok=True)
+        os.makedirs(self.config.pasta_transcricoes, exist_ok=True)
+
+    def processar_audios(self):
+        process_audio_folder(self.config.pasta_audios)
+
+    def processar_transcricoes(self):
+        process_transcription_folder(self.config.pasta_transcricoes)
+
+    def gerar_relatorio(self):
+        pasta_avaliacoes = os.path.join(self.config.pasta_transcricoes, 'Transcrições_avaliadas')
+        csv_saida = os.path.join(pasta_avaliacoes, f'relatorio_avaliacoes_{self.config.nome}.csv')
+        gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida)
+
+    def executar(self):
+        print(f'Processando carteira: {self.config.nome}')
+        self.processar_audios()
+        self.processar_transcricoes()
+        self.gerar_relatorio()
+        print(f'Processamento da carteira {self.config.nome} concluído.')
+
 if __name__ == '__main__':
-    pasta_audios = r'C:\Users\wanderley.terra\Documents\Audios_monitoria'
-    
-    process_audio_folder(pasta_audios)
-    
-    pasta_transcricoes = os.path.join(pasta_audios, 'Transcrições_aguas')
-    process_transcription_folder(pasta_transcricoes)
-    
-    pasta_avaliacoes = os.path.join(pasta_transcricoes, 'Transcrições_avaliadas')
-    csv_saida = os.path.join(pasta_avaliacoes, 'relatorio_avaliacoes.csv')
-    gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida)
-    
-    relatorio_gastos_saida = os.path.join(pasta_audios, 'relatorio_gastos.csv')
-    gerar_relatorio_gastos(
-        pasta_audios=pasta_audios,
-        pasta_transcricoes=pasta_transcricoes,
-        relatorio_saida=relatorio_gastos_saida,
-        modelo_transcricao='gpt-4o-transcribe',
-        preco_min_transcricao=0.006,
-        modelo_avaliacao='gpt-4.1-nano',
-        preco_avaliacao_por_chamada=0.002
+    # Configuração da carteira Águas Guariroba
+    config_aguas = CarteiraConfig(
+        nome='aguas_guariroba',
+        pasta_audios=r'C:\Users\wanderley.terra\Documents\Audios_monitoria',
+        pasta_transcricoes=os.path.join(r'C:\Users\wanderley.terra\Documents\Audios_monitoria', 'Transcrições_aguas'),
+        prompt_avaliacao=SYSTEM_PROMPT
     )
-    
-    # Executar verificação de transcrições incompletas ao final do processo
-    verificar_transcricoes_incompletas(pasta_audios, pasta_transcricoes)
-    
-    print("Processamento completo!")
+    processador_aguas = ProcessadorCarteira(config_aguas)
+    processador_aguas.executar()
+
+    # Exemplo de outra carteira (descomente e ajuste para usar)
+    # config_outra = CarteiraConfig(
+    #     nome='outra_carteira',
+    #     pasta_audios=r'C:\Users\wanderley.terra\Documents\Audios_monitoria\OutraCarteira',
+    #     pasta_transcricoes=os.path.join(r'C:\Users\wanderley.terra\Documents\Audios_monitoria\OutraCarteira', 'Transcrições_outra'),
+    #     prompt_avaliacao='Seu prompt específico para outra carteira aqui'
+    # )
+    # processador_outra = ProcessadorCarteira(config_outra)
+    # processador_outra.executar()
