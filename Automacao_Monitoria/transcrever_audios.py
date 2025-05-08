@@ -120,7 +120,7 @@ CHECKLIST DE MONITORIA  (pesos)
 - Encerramento
   • Perguntou "Posso ajudar em algo mais?" e agradeceu? (somente se fechou o acordo)...................(0.40)
 
-REGRAS DE CONFORMIDADE DO SCRIPT ÁGUAS GUARIOBA
+REGRAS DE CONFORMIDADE DO SCRIPT ÁGUAS GUARIROBA
 ✔ Identificar‑se com NOME + "Portes Advogados assessoria jurídica das Águas Guariroba"
 ✔ Confirmar nome ou CPF e endereço antes da negociação
 ✔ Ofertar valor total, valor com desconto, entrada e parcelas ≥ R$ 20,00
