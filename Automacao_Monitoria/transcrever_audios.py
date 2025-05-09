@@ -188,7 +188,8 @@ def corrigir_portes_advogados(texto):
         r'portas de advogado',
         r'parte de advogado',
         r'pai dos advogados',
-        r'porto advogados'
+        r'porto advogados',
+        r'porta de jogados'
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Portes Advogados', texto, flags=re.IGNORECASE)
