@@ -15,6 +15,77 @@ from dotenv import load_dotenv
 import openai
 from openai import OpenAI
 from pydub.utils import mediainfo
+import mysql.connector
+from mysql.connector import Error as MySQLError
+
+# Configuração do banco de dados
+DB_CONFIG = {
+    'host': '10.100.10.57',
+    'port': 3306,
+    'user': 'user_automacao',
+    'password': 'G5T82ZWMr',
+    'database': 'vonix',
+    'charset': 'utf8mb4',
+    'collation': 'utf8mb4_unicode_ci',
+}
+
+def get_db_connection():
+    try:
+        conn = mysql.connector.connect(**DB_CONFIG)
+        return conn
+    except MySQLError as e:
+        print(f"Erro ao conectar ao banco de dados: {e}")
+        raise
+
+def salvar_avaliacao_no_banco(avaliacao: dict):
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Insere na tabela avaliacoes
+        sql_avaliacao = """
+        INSERT INTO avaliacoes (call_id, agent_id, pontuacao, status, data_avaliacao)
+        VALUES (%s, %s, %s, %s, NOW())
+        """
+        id_chamada = avaliacao['id_chamada']
+        agent_id = extrair_agent_id(id_chamada)
+        pontuacao = avaliacao.get('pontuacao_percentual', 0)
+        status = 'APROVADA' if pontuacao >= 70 else 'REPROVADA'
+        
+        cursor.execute(sql_avaliacao, (id_chamada, agent_id, pontuacao, status))
+        id_avaliacao = cursor.lastrowid
+
+        # Insere os itens avaliados
+        sql_itens = """
+        INSERT INTO itens_avaliados (id_avaliacao, categoria, item, status, peso, observacao)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        for categoria, itens in avaliacao.get('itens', {}).items():
+            for item_nome, info in itens.items():
+                peso = info.get('peso', 0)
+                status = info.get('status', 'NA')
+                obs = info.get('observacao', '')
+                cursor.execute(sql_itens, (id_avaliacao, categoria, item_nome, status, peso, obs))
+
+        conn.commit()
+        print(f"Avaliação {id_chamada} salva no banco com sucesso!")
+        
+    except MySQLError as e:
+        print(f"Erro ao salvar avaliação no banco: {e}")
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+def extrair_agent_id(id_chamada: str) -> str:
+    """Extrai o ID do agente do nome do arquivo de chamada."""
+    import re
+    match = re.search(r'Agente_(\d+)', id_chamada)
+    return match.group(1) if match else None
 
 # Definir todas as variáveis de ambiente possíveis para evitar symlinks
 os.environ["SPEECHBRAIN_DIALOG_STRATEGY"] = "copy"
@@ -468,6 +539,9 @@ def process_transcription_folder(pasta_transcricoes):
                         f.write(f"  • {item_nome}: {status} ({peso}) - {obs}\n")
             
             print(f"Resumo salvo em: {caminho_resumo}")
+            
+            # Salvar avaliação no banco de dados
+            salvar_avaliacao_no_banco(avaliacao)
             
         except Exception as e:
             print(f"Erro ao processar {arquivo}: {e}")
