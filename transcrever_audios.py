@@ -663,10 +663,9 @@ def process_audio_folder(pasta):
                         "falha_critica": False,
                         "itens": {}
                     }
-                    salvar_avaliacao_no_banco(avaliacao_simples, transcricao_texto=final_text_identificado)
-                    print(f"Transcrição salva no banco para {nome_base}")
+
                 except Exception as e:
-                    print(f"Erro ao salvar transcrição no banco: {e}")
+                    print(f"Erro ao preparar avaliação simples: {e}")
 
                 # Depois salva no arquivo
                 nome_txt = nome_base + '_diarizado.txt'
