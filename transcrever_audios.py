@@ -878,7 +878,7 @@ def redistribuir_pesos_e_pontuacao(itens: dict) -> dict:
             subitens.append((categoria, nome, info))
             
     # Filtrar subitens válidos (não N/A e não Falha Critica)
-    subitens_validos = [s for s in subitens if s[0].strip().lower() != 'falha critica' and s[2].get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']]
+    subitens_validos = [s for s in subitens if s[0].strip().lower() != 'falha critica' and s[2].get('status', '').strip().upper() not in ['N/A', 'NA', 'N. A.']]
     n_validos = len(subitens_validos)
     if n_validos == 0:
         return itens
@@ -886,7 +886,7 @@ def redistribuir_pesos_e_pontuacao(itens: dict) -> dict:
     peso_redistribuido = 1.0 / n_validos
     # Atribuir novo peso para cada subitem válido e zerar para N/A e Falha Critica
     for categoria, nome, info in subitens:
-        if categoria.strip().lower() != 'falha critica' and info.get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']:
+        if categoria.strip().lower() != 'falha critica' and info.get('status', '').strip().upper() not in ['N/A', 'NA', 'N. A.']:
             info['peso'] = round(peso_redistribuido, 4)
         else:
             info['peso'] = 0.0
