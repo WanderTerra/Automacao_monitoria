@@ -141,10 +141,11 @@ def extrair_descricao_e_peso(categoria: str, arquivo_resumo: str) -> tuple:
     
     return '', 0.0
 
-def salvar_avaliacao_no_banco(avaliacao: dict):
+def salvar_avaliacao_no_banco(avaliacao: dict, transcricao_texto: str = None):
     conn = None
     cursor = None
-    try:        # Obter o nome base do arquivo
+    try:        
+        # Obter o nome base do arquivo
         id_chamada = avaliacao['id_chamada']
         nome_base = os.path.splitext(os.path.basename(id_chamada))[0]
         
@@ -172,10 +173,6 @@ def salvar_avaliacao_no_banco(avaliacao: dict):
             if conn and conn.is_connected():
                 conn.close()
         
-        # Caminho para o arquivo de transcrição
-        pasta_base = os.path.dirname(id_chamada)
-        arquivo_transcricao = os.path.join(pasta_base, nome_base + '.txt')
-        
         # Calcular a pontuação total baseado nos itens
         total_validos = 0
         total_conforme = 0
@@ -194,7 +191,7 @@ def salvar_avaliacao_no_banco(avaliacao: dict):
         pontuacao = (total_conforme / total_validos * 100) if total_validos > 0 else 0
         status_avaliacao = 'APROVADA' if pontuacao >= 70 else 'REPROVADA'
         
-        # Log dos dados que serão salvos
+        # Debug dos dados que serão salvos
         print("\n============ DADOS PARA INSERÇÃO NO BANCO ============")
         print(f"TABELA avaliacoes:")
         print(f"- call_id: {extrair_call_id_original(os.path.basename(avaliacao['id_chamada']))}")
@@ -208,12 +205,10 @@ def salvar_avaliacao_no_banco(avaliacao: dict):
         for categoria, item in avaliacao.get('itens', {}).items():
             print(f"- categoria: {categoria}")
             if isinstance(item, dict):
-                # Formato detalhado com status e observação
                 status = item.get('status', 'NA')
                 observacao = item.get('observacao', '')
                 peso = 1.0  # Peso base, será redistribuído depois
             else:
-                # Formato simples com apenas status
                 status = item if isinstance(item, str) else 'NA'
                 observacao = ''
                 peso = 1.0
@@ -230,7 +225,6 @@ def salvar_avaliacao_no_banco(avaliacao: dict):
         cursor = conn.cursor()
 
         # Obter o call_id original
-        id_chamada = avaliacao['id_chamada']
         call_id_original = extrair_call_id_original(os.path.basename(id_chamada))
         
         if not call_id_original:
@@ -269,16 +263,27 @@ def salvar_avaliacao_no_banco(avaliacao: dict):
             peso = peso_por_item if resultado != 'NAO SE APLICA' else 0.0
             cursor.execute(sql_itens, (id_avaliacao, categoria, observacao, resultado, peso))
 
-        # Inserir a transcrição, se existir
-        if os.path.exists(arquivo_transcricao):
-            with open(arquivo_transcricao, 'r', encoding='utf-8') as f:
-                conteudo_transcricao = f.read()
-            
-            sql_transcricao = """
-            INSERT INTO transcricoes (avaliacao_id, conteudo)
-            VALUES (%s, %s)
-            """
-            cursor.execute(sql_transcricao, (id_avaliacao, conteudo_transcricao))
+        # Buscar e inserir o conteúdo da transcrição
+        # Usa apenas a transcrição passada pela variável, não lê mais o arquivo txt
+        conteudo_transcricao = transcricao_texto
+        if conteudo_transcricao:
+            # Verifica se já existe transcrição para este avaliacao_id
+            sql_check = "SELECT id FROM transcricoes WHERE avaliacao_id = %s"
+            cursor.execute(sql_check, (id_avaliacao,))
+            existe = cursor.fetchone()
+            if existe:
+                sql_update = "UPDATE transcricoes SET conteudo = %s WHERE avaliacao_id = %s"
+                cursor.execute(sql_update, (conteudo_transcricao, id_avaliacao))
+                print(f"Transcrição atualizada para avaliacao_id: {id_avaliacao}")
+            else:
+                sql_transcricao = """
+                INSERT INTO transcricoes (avaliacao_id, conteudo)
+                VALUES (%s, %s)
+                """
+                cursor.execute(sql_transcricao, (id_avaliacao, conteudo_transcricao))
+                print(f"Transcrição inserida com sucesso para avaliacao_id: {id_avaliacao}")
+        else:
+            print(f"AVISO: Conteúdo da transcrição vazio, não foi possível inserir no banco. Valor recebido: {repr(transcricao_texto)}")
 
         conn.commit()
         print(f"Avaliação do call_id {call_id_original} salva no banco com sucesso!")
@@ -473,7 +478,8 @@ def corrigir_portes_advogados(texto):
         r'parte de advogado',
         r'pai dos advogados',
         r'porto advogados',
-        r'porta de jogados'
+        r'porta de jogados',
+        r'parque dos advogados'
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Portes Advogados', texto, flags=re.IGNORECASE)
@@ -638,42 +644,64 @@ def process_audio_folder(pasta):
         print(f"Processando: {arquivo}")
         tempo_inicio = time.time()  # Marca o início do processamento do áudio
         final_text = process_audio_file(caminho_audio)
-        if final_text:
-            # Corrigir variações de "Portes Advogados" antes da classificação dos falantes
-            final_text_corrigido = corrigir_portes_advogados(final_text)
-            try:
-                final_text_identificado = classificar_falantes_com_gpt(final_text_corrigido)
-            except Exception as e:
-                print(f"Erro ao identificar falantes com gpt-4.1-nano: {e}")
-                final_text_identificado = final_text_corrigido
-            nome_txt = os.path.splitext(arquivo)[0] + '_diarizado.txt'
-            caminho_txt = os.path.join(pasta_transcricoes, nome_txt)
-            with open(caminho_txt, 'w', encoding='utf-8') as f:
-                f.write(final_text_identificado)
-            print(f"Transcrição salva em: {caminho_txt}")
-            caminho_destino = os.path.join(pasta_audios_transcritos, arquivo)
-            try:
-                import shutil
-                shutil.move(caminho_audio, caminho_destino)
-                print(f"Arquivo de áudio movido para: {caminho_destino}")
-            except Exception as e:
-                print(f"Erro ao mover o arquivo de áudio: {e}")
-            # Salva o tempo de início do processamento para uso posterior
-            with open(caminho_txt + '.start', 'w') as f:
-                f.write(str(tempo_inicio))
-        else:
-            caminho_erro = os.path.join(pasta_erros, arquivo)
-            try:
-                import shutil
-                shutil.move(caminho_audio, caminho_erro)
-                print(f"Falha ao processar {arquivo} - Arquivo movido para pasta de erros: {caminho_erro}")
-                log_path = os.path.join(pasta_erros, f"{os.path.splitext(arquivo)[0]}_erro.txt")
-                with open(log_path, 'w', encoding='utf-8') as log_file:
-                    log_file.write(f"Erro ao processar o arquivo {arquivo}\n")
-                    log_file.write(f"Data/hora: {format_time_now()}\n")
-                    log_file.write(f"Falha na transcrição ou identificação de falantes")
-            except Exception as move_error:
-                print(f"Erro ao mover o arquivo com falha: {move_error}")
+        nome_base = os.path.splitext(arquivo)[0]
+        caminho_destino = os.path.join(pasta_audios_transcritos, arquivo)
+        try:
+            if final_text:
+                # Corrigir variações de "Portes Advogados" antes da classificação dos falantes
+                final_text_corrigido = corrigir_portes_advogados(final_text)
+                try:
+                    final_text_identificado = classificar_falantes_com_gpt(final_text_corrigido)
+                except Exception as e:
+                    print(f"Erro ao identificar falantes com gpt-4.1-nano: {e}")
+                    final_text_identificado = final_text_corrigido
+
+                try:
+                    avaliacao_simples = {
+                        "id_chamada": nome_base,
+                        "avaliador": "MonitorGPT",
+                        "falha_critica": False,
+                        "itens": {}
+                    }
+                    salvar_avaliacao_no_banco(avaliacao_simples, transcricao_texto=final_text_identificado)
+                    print(f"Transcrição salva no banco para {nome_base}")
+                except Exception as e:
+                    print(f"Erro ao salvar transcrição no banco: {e}")
+
+                # Depois salva no arquivo
+                nome_txt = nome_base + '_diarizado.txt'
+                caminho_txt = os.path.join(pasta_transcricoes, nome_txt)
+                try:
+                    with open(caminho_txt, 'w', encoding='utf-8') as f:
+                        f.write(final_text_identificado)
+                    print(f"Transcrição salva em arquivo: {caminho_txt}")
+                    # Salva o tempo de início do processamento para uso posterior
+                    with open(caminho_txt + '.start', 'w') as f:
+                        f.write(str(tempo_inicio))
+                except Exception as e:
+                    print(f"Erro ao salvar transcrição em arquivo: {e}")
+            else:
+                caminho_erro = os.path.join(pasta_erros, arquivo)
+                try:
+                    shutil.move(caminho_audio, caminho_erro)
+                    print(f"Falha ao processar {arquivo} - Arquivo movido para pasta de erros: {caminho_erro}")
+                    log_path = os.path.join(pasta_erros, f"{os.path.splitext(arquivo)[0]}_erro.txt")
+                    with open(log_path, 'w', encoding='utf-8') as log_file:
+                        log_file.write(f"Erro ao processar o arquivo {arquivo}\n")
+                        log_file.write(f"Data/hora: {format_time_now()}\n")
+                        log_file.write(f"Falha na transcrição ou identificação de falantes")
+                except Exception as move_error:
+                    print(f"Erro ao mover o arquivo com falha: {move_error}")
+                return  # Não tenta mover para transcritos se falhou
+        finally:
+            # Garante que o áudio seja movido para a pasta de transcritos se não foi movido para erros
+            if os.path.exists(caminho_audio):
+                try:
+                    shutil.move(caminho_audio, caminho_destino)
+                    print(f"Arquivo de áudio movido para: {caminho_destino}")
+                except Exception as e:
+                    print(f"Erro ao mover o arquivo de áudio: {e}")
+
 
 def format_time_now():
     from datetime import datetime
@@ -733,9 +761,11 @@ def process_transcription_folder(pasta_transcricoes):
             avaliacao['itens'] = avaliacao.get('itens', {})
             avaliacao['pontuacao_percentual'] = avaliacao.get('pontuacao_percentual', 0)
             
+            # Não salva transcrição no banco neste fluxo!
+            # Apenas avalia e registra os itens avaliados, sem inserir transcrição
             try:
-                salvar_avaliacao_no_banco(avaliacao)
-                print(f"[DEBUG] Inserção no banco concluída para {id_chamada}")
+                salvar_avaliacao_no_banco(avaliacao, transcricao_texto=None)
+                print(f"[DEBUG] Inserção no banco concluída para {id_chamada} (sem transcrição)")
                 # Move arquivos somente se a inserção no banco foi bem-sucedida
                 caminho_destino = os.path.join(pasta_transcricoes_avaliadas, arquivo)
                 shutil.copy2(caminho_transcricao, caminho_destino)
