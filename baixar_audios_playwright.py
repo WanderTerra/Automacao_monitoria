@@ -27,8 +27,8 @@ FROM vonix.calls AS c
 WHERE queue_id LIKE 'aguas%'
   AND queue_id NOT LIKE 'aguasguariroba%'
   AND status LIKE 'Completada%'
-  AND start_time >= '2025-05-12 00:00:00'
-  AND start_time < '2025-05-13 00:00:00'
+  AND start_time >= '2025-05-13 00:00:00'
+  AND start_time < '2025-05-14 00:00:00'
   AND call_secs > 60
 ORDER BY start_time DESC
 '''
@@ -49,9 +49,21 @@ def buscar_call_ids_do_banco():
         print(f"Erro ao consultar banco: {e}")
     return call_ids
 
+def salvar_mapeamento_call_ids(mapeamento):
+    arquivo_mapeamento = os.path.join(PASTA_DESTINO, 'mapeamento_call_ids.csv')
+    with open(arquivo_mapeamento, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['nome_arquivo', 'call_id'])
+        for nome_arquivo, call_id in mapeamento.items():
+            writer.writerow([nome_arquivo, call_id])
+    print(f'Mapeamento salvo em: {arquivo_mapeamento}')
+
 def baixar_audios_com_playwright(call_ids):
     if not os.path.exists(PASTA_DESTINO):
         os.makedirs(PASTA_DESTINO)
+    
+    mapeamento = {}
+    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         context = browser.new_context(accept_downloads=True)
@@ -73,10 +85,13 @@ def baixar_audios_com_playwright(call_ids):
                 nome_arquivo = download.suggested_filename
                 caminho_arquivo = os.path.join(PASTA_DESTINO, nome_arquivo)
                 download.save_as(caminho_arquivo)
-                print(f'Áudio salvo: {caminho_arquivo}')
+                mapeamento[nome_arquivo] = call_id
+                print(f'Áudio salvo: {caminho_arquivo} (call_id: {call_id})')
             except Exception as e:
                 print(f'Falha ao baixar {call_id}: {e}')
         browser.close()
+    
+    salvar_mapeamento_call_ids(mapeamento)
 
 if __name__ == '__main__':
     call_ids = buscar_call_ids_do_banco()

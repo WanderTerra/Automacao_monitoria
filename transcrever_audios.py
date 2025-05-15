@@ -6,7 +6,6 @@ import time
 import csv
 import glob
 import shutil
-import tempfile
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -37,48 +36,262 @@ def get_db_connection():
         print(f"Erro ao conectar ao banco de dados: {e}")
         raise
 
-def salvar_avaliacao_no_banco(avaliacao: dict):
+def carregar_mapeamento_call_ids(pasta_audios: str) -> dict:
+    """
+    Carrega o mapeamento entre nomes de arquivos e call_ids originais.
+    """
+    arquivo_mapeamento = os.path.join(pasta_audios, 'mapeamento_call_ids.csv')
+    mapeamento = {}
     try:
+        with open(arquivo_mapeamento, 'r') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                mapeamento[row['nome_arquivo']] = row['call_id']
+        print(f"Mapeamento de call_ids carregado com {len(mapeamento)} registros.")
+    except FileNotFoundError:
+        print("AVISO: Arquivo de mapeamento não encontrado. Usando método de busca por data/hora.")
+    return mapeamento
+
+# Variável global para armazenar o mapeamento
+mapeamento_call_ids = {}
+
+def extrair_call_id_original(nome_arquivo: str) -> str:
+    """
+    Obtém o call_id original usando o mapeamento ou, se não disponível,
+    busca no banco de dados com base na data e hora.
+    """
+    # Primeiro tenta usar o mapeamento
+    if nome_arquivo in mapeamento_call_ids:
+        return mapeamento_call_ids[nome_arquivo]
+    
+    # Se não encontrou no mapeamento, usa o método antigo
+    try:
+        match = re.match(r'(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})_Agente_(\d+)', nome_arquivo)
+        if not match:
+            return None
+        
+        year, month, day, hour, minute, second, agent_id = match.groups()
+        data_hora = f"{year}-{month}-{day} {hour}:{minute}:{second}"
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Busca o call_id próximo ao horário do arquivo (com margem de 5 minutos)
+        query = """
+        SELECT call_id FROM vonix.calls
+        WHERE agent_id = %s
+        AND ABS(TIMESTAMPDIFF(SECOND, start_time, %s)) < 300
+        ORDER BY ABS(TIMESTAMPDIFF(SECOND, start_time, %s))
+        LIMIT 1
+        """
+        
+        cursor.execute(query, (agent_id, data_hora, data_hora))
+        resultado = cursor.fetchone()
+        
+        if resultado:
+            return resultado[0]
+        return None
+        
+    except Exception as e:
+        print(f"Erro ao buscar call_id original: {e}")
+        return None
+    finally:
+        if cursor:
+            cursor.close()
+        if conn and conn.is_connected():
+            conn.close()
+
+def map_resultado_value(status: str) -> str:
+    """Maps the status values to database-compatible resultado values"""
+    status_map = {
+        'C': 'CONFORME',
+        'NC': 'NAO CONFORME',
+        'NA': 'NAO SE APLICA',
+        'N/A': 'NAO SE APLICA',
+        'N\\A': 'NAO SE APLICA',
+        'N. A.': 'NAO SE APLICA'
+    }
+    return status_map.get(status.upper(), 'NAO SE APLICA')
+
+def extrair_descricao_e_peso(categoria: str, arquivo_resumo: str) -> tuple:
+    """
+    Extrai a descrição completa e o peso de um item do arquivo de resumo
+    Retorna uma tupla (descrição, peso)
+    """
+    try:
+        with open(arquivo_resumo, 'r', encoding='utf-8') as f:
+            conteudo = f.read()
+        
+        # Procura pelo bloco do item específico
+        categoria_formatada = categoria.replace('_', ' ').title().strip()
+        blocos = conteudo.split('\n\n')
+        for bloco in blocos:
+            if categoria_formatada in bloco:
+                # Extrai o peso (número entre parênteses)
+                peso_match = re.search(r'\(([0-9.]+)\)', bloco)
+                peso = float(peso_match.group(1)) if peso_match else 0.0
+                
+                # Extrai a descrição (texto após o hífen)
+                desc_match = re.search(r'-\s*(.+?)(?=\n|$)', bloco)
+                descricao = desc_match.group(1).strip() if desc_match else ''
+                
+                return descricao, peso
+    except Exception as e:
+        print(f"Erro ao extrair descrição e peso para {categoria}: {e}")
+    
+    return '', 0.0
+
+def salvar_avaliacao_no_banco(avaliacao: dict):
+    conn = None
+    cursor = None
+    try:        # Obter o nome base do arquivo
+        id_chamada = avaliacao['id_chamada']
+        nome_base = os.path.splitext(os.path.basename(id_chamada))[0]
+        
+        # Obter a data do arquivo usando a data associada ao call_id
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT start_time 
+                FROM vonix.calls 
+                WHERE call_id = %s
+                """, (extrair_call_id_original(os.path.basename(id_chamada)),))
+            resultado = cursor.fetchone()
+            if resultado:
+                data_ligacao = resultado[0].strftime('%Y-%m-%d %H:%M:%S')
+            else:
+                data_ligacao = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                print("AVISO: Não foi possível encontrar a data da ligação no banco, usando data atual.")
+        except Exception as e:
+            print(f"Erro ao buscar data da ligação: {e}")
+            data_ligacao = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        finally:
+            if cursor:
+                cursor.close()
+            if conn and conn.is_connected():
+                conn.close()
+        
+        # Caminho para o arquivo de transcrição
+        pasta_base = os.path.dirname(id_chamada)
+        arquivo_transcricao = os.path.join(pasta_base, nome_base + '.txt')
+        
+        # Calcular a pontuação total baseado nos itens
+        total_validos = 0
+        total_conforme = 0
+        for item in avaliacao.get('itens', {}).values():
+            if isinstance(item, dict):
+                status = item.get('status', 'NA')
+            else:
+                status = item if isinstance(item, str) else 'NA'
+                
+            resultado = map_resultado_value(status)
+            if resultado != 'NAO SE APLICA':
+                total_validos += 1
+                if resultado == 'CONFORME':
+                    total_conforme += 1
+        
+        pontuacao = (total_conforme / total_validos * 100) if total_validos > 0 else 0
+        status_avaliacao = 'APROVADA' if pontuacao >= 70 else 'REPROVADA'
+        
+        # Log dos dados que serão salvos
+        print("\n============ DADOS PARA INSERÇÃO NO BANCO ============")
+        print(f"TABELA avaliacoes:")
+        print(f"- call_id: {extrair_call_id_original(os.path.basename(avaliacao['id_chamada']))}")
+        print(f"- agent_id: {extrair_agent_id(avaliacao['id_chamada'])}")
+        print(f"- data_ligacao: {data_ligacao}")
+        print(f"- status_avaliacao: {status_avaliacao}")
+        print(f"- pontuacao: {pontuacao}")
+        print(f"- carteira: AGUAS")
+        
+        print("\nTABELA itens_avaliados:")
+        for categoria, item in avaliacao.get('itens', {}).items():
+            print(f"- categoria: {categoria}")
+            if isinstance(item, dict):
+                # Formato detalhado com status e observação
+                status = item.get('status', 'NA')
+                observacao = item.get('observacao', '')
+                peso = 1.0  # Peso base, será redistribuído depois
+            else:
+                # Formato simples com apenas status
+                status = item if isinstance(item, str) else 'NA'
+                observacao = ''
+                peso = 1.0
+                
+            resultado = map_resultado_value(status)
+            print(f"  descricao: {observacao}")
+            print(f"  resultado: {resultado}")
+            print(f"  peso: {peso}")
+            print("  ---")
+                
+        print("====================================================\n")
+
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Insere na tabela avaliacoes
-        sql_avaliacao = """
-        INSERT INTO avaliacoes (call_id, agent_id, pontuacao, status, data_avaliacao)
-        VALUES (%s, %s, %s, %s, NOW())
-        """
+        # Obter o call_id original
         id_chamada = avaliacao['id_chamada']
-        agent_id = extrair_agent_id(id_chamada)
-        pontuacao = avaliacao.get('pontuacao_percentual', 0)
-        status = 'APROVADA' if pontuacao >= 70 else 'REPROVADA'
+        call_id_original = extrair_call_id_original(os.path.basename(id_chamada))
         
-        cursor.execute(sql_avaliacao, (id_chamada, agent_id, pontuacao, status))
-        id_avaliacao = cursor.lastrowid
+        if not call_id_original:
+            raise ValueError(f"Não foi possível encontrar o call_id original para {id_chamada}")
+        
+        agent_id = extrair_agent_id(id_chamada)
+        carteira = 'AGUAS'  # Valor fixo para este contexto
 
-        # Insere os itens avaliados
-        sql_itens = """
-        INSERT INTO itens_avaliados (id_avaliacao, categoria, item, status, peso, observacao)
+        # Inserir na tabela avaliacoes
+        sql_avaliacao = """
+        INSERT INTO avaliacoes (call_id, agent_id, data_ligacao, status_avaliacao, pontuacao, carteira)
         VALUES (%s, %s, %s, %s, %s, %s)
         """
-        for categoria, itens in avaliacao.get('itens', {}).items():
-            for item_nome, info in itens.items():
-                peso = info.get('peso', 0)
-                status = info.get('status', 'NA')
-                obs = info.get('observacao', '')
-                cursor.execute(sql_itens, (id_avaliacao, categoria, item_nome, status, peso, obs))
+        cursor.execute(sql_avaliacao, (call_id_original, agent_id, data_ligacao, status_avaliacao, pontuacao, carteira))
+        id_avaliacao = cursor.lastrowid
+
+        # Calcular o total de itens não-NA para redistribuir os pesos
+        itens_validos = sum(1 for item in avaliacao.get('itens', {}).values() 
+                          if isinstance(item, dict) and map_resultado_value(item.get('status', 'NA')) != 'NAO SE APLICA')
+        peso_por_item = round(1.0 / itens_validos if itens_validos > 0 else 0.0, 4)
+
+        # Inserir os itens avaliados
+        sql_itens = """
+        INSERT INTO itens_avaliados (avaliacao_id, categoria, descricao, resultado, peso)
+        VALUES (%s, %s, %s, %s, %s)
+        """
+        
+        for categoria, item in avaliacao.get('itens', {}).items():
+            if isinstance(item, dict):
+                resultado = map_resultado_value(item.get('status', 'NA'))
+                observacao = item.get('observacao', '')
+            else:
+                resultado = map_resultado_value(item if isinstance(item, str) else 'NA')
+                observacao = ''
+                
+            peso = peso_por_item if resultado != 'NAO SE APLICA' else 0.0
+            cursor.execute(sql_itens, (id_avaliacao, categoria, observacao, resultado, peso))
+
+        # Inserir a transcrição, se existir
+        if os.path.exists(arquivo_transcricao):
+            with open(arquivo_transcricao, 'r', encoding='utf-8') as f:
+                conteudo_transcricao = f.read()
+            
+            sql_transcricao = """
+            INSERT INTO transcricoes (avaliacao_id, conteudo)
+            VALUES (%s, %s)
+            """
+            cursor.execute(sql_transcricao, (id_avaliacao, conteudo_transcricao))
 
         conn.commit()
-        print(f"Avaliação {id_chamada} salva no banco com sucesso!")
+        print(f"Avaliação do call_id {call_id_original} salva no banco com sucesso!")
         
-    except MySQLError as e:
+    except Exception as e:
         print(f"Erro ao salvar avaliação no banco: {e}")
-        if conn:
+        if conn and conn.is_connected():
             conn.rollback()
         raise
     finally:
         if cursor:
             cursor.close()
-        if conn:
+        if conn and conn.is_connected():
             conn.close()
 
 def extrair_agent_id(id_chamada: str) -> str:
@@ -401,6 +614,7 @@ def process_audio_file(caminho_audio):
         return None
 
 def process_audio_folder(pasta):
+    global mapeamento_call_ids
     extensoes_audio = ['.mp3', '.wav', '.m4a', '.ogg', '.flac']
     arquivos = [f for f in os.listdir(pasta) if os.path.splitext(f)[1].lower() in extensoes_audio]
     if not arquivos:
@@ -415,6 +629,10 @@ def process_audio_folder(pasta):
     print(f"Pasta para áudios processados: {pasta_audios_transcritos}")
     print(f"Pasta para transcrições: {pasta_transcricoes}")
     print(f"Pasta para áudios com erro: {pasta_erros}")
+    
+    # Carrega o mapeamento de call_ids
+    mapeamento_call_ids = carregar_mapeamento_call_ids(pasta)
+    
     for arquivo in arquivos:
         caminho_audio = os.path.join(pasta, arquivo)
         print(f"Processando: {arquivo}")
@@ -493,66 +711,58 @@ def process_transcription_folder(pasta_transcricoes):
             with open(caminho_transcricao, 'r', encoding='utf-8') as f:
                 conteudo_transcricao = f.read()
             
+            # Garantir que a avaliação retorne um dicionário
             avaliacao = avaliar_ligacao(conteudo_transcricao, id_chamada=id_chamada)
-            if 'itens' in avaliacao:
-                resultado_redistribuido = redistribuir_pesos_e_pontuacao(avaliacao['itens'])
-                avaliacao['itens'] = resultado_redistribuido['itens']
-                avaliacao['pontuacao_total'] = resultado_redistribuido['pontuacao_total']
-                avaliacao['pontuacao_percentual'] = resultado_redistribuido['pontuacao_percentual']
+            if isinstance(avaliacao, str):
+                try:
+                    avaliacao = json.loads(avaliacao)
+                except json.JSONDecodeError:
+                    # Se não conseguir converter para JSON, cria um dicionário padrão
+                    avaliacao = {
+                        "id_chamada": id_chamada,
+                        "avaliador": "MonitorGPT",
+                        "falha_critica": True,
+                        "itens": {},
+                        "erro_processamento": "Falha ao decodificar JSON da avaliação",
+                        "pontuacao_total": 0,
+                        "pontuacao_percentual": 0
+                    }
             
-            nome_avaliacao = f"{id_chamada}_avaliacao.json"
-            caminho_avaliacao = os.path.join(pasta_transcricoes_avaliadas, nome_avaliacao)
-            
-            with open(caminho_avaliacao, 'w', encoding='utf-8') as f:
-                json.dump(avaliacao, f, ensure_ascii=False, indent=2)
-            
-            print(f"Avaliação salva em: {caminho_avaliacao}")
-            
-            caminho_destino = os.path.join(pasta_transcricoes_avaliadas, arquivo)
-            import shutil
-            shutil.copy2(caminho_transcricao, caminho_destino)
-            os.remove(caminho_transcricao)
-            print(f"Transcrição movida para: {caminho_destino}")
-            
-            # Salva o tempo de término do processamento para uso posterior
-            with open(caminho_avaliacao + '.end', 'w') as f:
-                f.write(str(time.time()))
-            
-            nota = avaliacao.get('pontuacao_percentual', 0)
-            status = "APROVADA" if nota >= 70 else "REPROVADA"
-            
-            nome_resumo = f"{id_chamada}_resumo.txt"
-            caminho_resumo = os.path.join(pasta_transcricoes_avaliadas, nome_resumo)
-            
-            with open(caminho_resumo, 'w', encoding='utf-8') as f:
-                f.write(f"Avaliação da ligação: {id_chamada}\n")
-                f.write(f"Status: {status}\n")
-                f.write(f"Pontuação: {nota:.2f}%\n\n")
-                f.write("Itens avaliados:\n")
-                
-                for categoria, itens in avaliacao.get('itens', {}).items():
-                    f.write(f"\n{categoria}:\n")
-                    for item_nome, item_info in itens.items():
-                        status = item_info.get('status', 'N/A')
-                        peso = item_info.get('peso', 0)
-                        obs = item_info.get('observacao', '')
-                        f.write(f"  • {item_nome}: {status} ({peso}) - {obs}\n")
-            
-            print(f"Resumo salvo em: {caminho_resumo}")
-            
-            # Salvar avaliação no banco de dados
-            salvar_avaliacao_no_banco(avaliacao)
-            
-        except Exception as e:
-            print(f"Erro ao processar {arquivo}: {e}")
+            # Adiciona campos necessários se faltando
+            avaliacao['id_chamada'] = avaliacao.get('id_chamada', id_chamada)
+            avaliacao['itens'] = avaliacao.get('itens', {})
+            avaliacao['pontuacao_percentual'] = avaliacao.get('pontuacao_percentual', 0)
             
             try:
-                import shutil
+                salvar_avaliacao_no_banco(avaliacao)
+                print(f"[DEBUG] Inserção no banco concluída para {id_chamada}")
+                # Move arquivos somente se a inserção no banco foi bem-sucedida
+                caminho_destino = os.path.join(pasta_transcricoes_avaliadas, arquivo)
+                shutil.copy2(caminho_transcricao, caminho_destino)
+                os.remove(caminho_transcricao)
+                print(f"Transcrição movida para: {caminho_destino}")
+            except Exception as db_exc:
+                print(f"[ERRO] Falha ao inserir avaliação no banco: {db_exc}")
+                log_path = os.path.join(pasta_transcricoes_erros, f"{id_chamada}_db_erro.txt")
+                with open(log_path, 'w', encoding='utf-8') as log_file:
+                    log_file.write(f"Erro ao inserir avaliação no banco para {arquivo}\n")
+                    log_file.write(f"Data/hora: {format_time_now()}\n")
+                    log_file.write(f"Erro: {str(db_exc)}\n")
+                    log_file.write(f"Conteúdo da avaliação: {json.dumps(avaliacao, ensure_ascii=False)[:2000]}\n")
+                print(f"Log de erro de banco criado em: {log_path}")
+                # Move a transcrição para a pasta de erros em caso de falha
                 caminho_destino_erro = os.path.join(pasta_transcricoes_erros, arquivo)
                 shutil.copy2(caminho_transcricao, caminho_destino_erro)
                 os.remove(caminho_transcricao)
                 print(f"Transcrição movida para pasta de erros: {caminho_destino_erro}")
                 
+        except Exception as e:
+            print(f"Erro ao processar {arquivo}: {e}")
+            try:
+                caminho_destino_erro = os.path.join(pasta_transcricoes_erros, arquivo)
+                shutil.copy2(caminho_transcricao, caminho_destino_erro)
+                os.remove(caminho_transcricao)
+                print(f"Transcrição movida para pasta de erros: {caminho_destino_erro}")
                 log_path = os.path.join(pasta_transcricoes_erros, f"{id_chamada}_erro.txt")
                 with open(log_path, 'w', encoding='utf-8') as log_file:
                     log_file.write(f"Erro ao avaliar a transcrição {arquivo}\n")
@@ -573,25 +783,56 @@ def avaliar_ligacao(transcricao: str, *,
     ]
 
     print(f"Avaliando ligação: {id_chamada}")
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",  
-        messages=messages,
-        temperature=0.0,
-        max_tokens=1024
-    )
-
-    assistant_content = response.choices[0].message.content.strip()
-
     try:
-        result = json.loads(assistant_content)
+        response = client.chat.completions.create(
+            model="gpt-4.1-mini",  
+            messages=messages,
+            temperature=0.0,
+            max_tokens=1024
+        )
+
+        assistant_content = response.choices[0].message.content.strip()
+
+        # Try to extract JSON from the response
+        json_match = re.search(r'\{[\s\S]*\}', assistant_content)
+        if not json_match:
+            raise ValueError(f"No JSON found in response: {assistant_content[:200]}")
+        
+        try:
+            result = json.loads(json_match.group(0))
+        except json.JSONDecodeError:
+            # If direct JSON parse fails, try to clean the string first
+            clean_json = assistant_content.replace('\n', ' ').replace('```json', '').replace('```', '')
+            json_match = re.search(r'\{[\s\S]*\}', clean_json)
+            if not json_match:
+                raise ValueError(f"No JSON found in cleaned response: {clean_json[:200]}")
+            result = json.loads(json_match.group(0))
+
+        # Ensure required fields exist
+        if 'id_chamada' not in result:
+            result['id_chamada'] = id_chamada
+        if 'itens' not in result:
+            raise ValueError("Response JSON missing 'itens' field")
+
+        # Add total field if needed
         total = result.get("pontuacao_total", 0)
         result["pontuacao_percentual"] = round((total / MAX_SEM_GSS) * 100, 1)
+
         print(f"Avaliação concluída para ligação: {id_chamada}")
         return result
-    except json.JSONDecodeError as e:
-        error_msg = f"Resposta não é JSON válido para ligação {id_chamada}"
+    except Exception as e:
+        error_msg = f"Erro na avaliação da ligação {id_chamada}: {str(e)}"
         print(f"ERRO: {error_msg}")
-        raise RuntimeError(error_msg) from e
+        # Return a minimal valid result structure instead of raising
+        return {
+            "id_chamada": id_chamada,
+            "avaliador": "MonitorGPT",
+            "falha_critica": True,
+            "itens": {},
+            "erro_processamento": str(e),
+            "pontuacao_total": 0,
+            "pontuacao_percentual": 0
+        }
 
 def redistribuir_pesos_e_pontuacao(itens: dict) -> dict:
     """
@@ -606,11 +847,13 @@ def redistribuir_pesos_e_pontuacao(itens: dict) -> dict:
             if categoria.strip().lower() == 'falha critica' and info.get('status', '').strip().upper() == 'NÃO CONFORME':
                 falha_critica_nao_conforme = True
             subitens.append((categoria, nome, info))
+            
     # Filtrar subitens válidos (não N/A e não Falha Critica)
     subitens_validos = [s for s in subitens if s[0].strip().lower() != 'falha critica' and s[2].get('status', '').strip().upper() not in ['N/A', 'NA', 'N\A', 'N. A.']]
     n_validos = len(subitens_validos)
     if n_validos == 0:
         return itens
+        
     peso_redistribuido = 1.0 / n_validos
     # Atribuir novo peso para cada subitem válido e zerar para N/A e Falha Critica
     for categoria, nome, info in subitens:
@@ -618,14 +861,17 @@ def redistribuir_pesos_e_pontuacao(itens: dict) -> dict:
             info['peso'] = round(peso_redistribuido, 4)
         else:
             info['peso'] = 0.0
+            
     # Calcular pontuação total redistribuída (só soma os 'Conforme', exceto Falha Critica)
     pontuacao_total = 0.0
     for categoria, nome, info in subitens:
         if categoria.strip().lower() != 'falha critica' and info.get('status', '').strip().upper() == 'CONFORME':
             pontuacao_total += info['peso']
+            
     # Se Falha Critica for Não Conforme, zera a nota
     if falha_critica_nao_conforme:
         pontuacao_total = 0.0
+        
     return {
         'itens': itens,
         'pontuacao_total': round(pontuacao_total * 10, 2),
