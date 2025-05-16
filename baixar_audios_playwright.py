@@ -3,6 +3,7 @@ import time
 import csv
 import mysql.connector
 from playwright.sync_api import sync_playwright
+from datetime import datetime, timedelta
 
 LOGIN_URL = 'https://portesmarinho.vonixcc.com.br/login/signin'
 DOWNLOAD_URL = 'https://portesmarinho.vonixcc.com.br/recordings/{}'
@@ -21,14 +22,26 @@ DB_CONFIG = {
     'collation': 'utf8mb4_unicode_ci',
 }
 
-SQL_QUERY = '''
+def obter_datas_para_sql():
+    hoje = datetime.now()
+    if hoje.weekday() == 0:  # Segunda-feira
+        dia_busca = hoje - timedelta(days=2)  # Sábado
+    else:
+        dia_busca = hoje - timedelta(days=1)  # Dia anterior
+    data_inicio = dia_busca.replace(hour=0, minute=0, second=0, microsecond=0)
+    data_fim = data_inicio + timedelta(days=1)
+    return data_inicio.strftime('%Y-%m-%d %H:%M:%S'), data_fim.strftime('%Y-%m-%d %H:%M:%S')
+
+# Atualiza a query dinamicamente
+DATA_INICIO, DATA_FIM = obter_datas_para_sql()
+SQL_QUERY = f'''
 SELECT call_id, queue_id, start_time, answer_time, hangup_time, call_secs
 FROM vonix.calls AS c
 WHERE queue_id LIKE 'aguas%'
   AND queue_id NOT LIKE 'aguasguariroba%'
   AND status LIKE 'Completada%'
-  AND start_time >= '2025-05-13 00:00:00'
-  AND start_time < '2025-05-14 00:00:00'
+  AND start_time >= '{DATA_INICIO}'
+  AND start_time < '{DATA_FIM}'
   AND call_secs > 60
 ORDER BY start_time DESC
 '''
