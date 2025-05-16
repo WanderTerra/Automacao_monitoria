@@ -744,7 +744,6 @@ def process_transcription_folder(pasta_transcricoes):
                 try:
                     avaliacao = json.loads(avaliacao)
                 except json.JSONDecodeError:
-                    # Se não conseguir converter para JSON, cria um dicionário padrão
                     avaliacao = {
                         "id_chamada": id_chamada,
                         "avaliador": "MonitorGPT",
@@ -754,18 +753,13 @@ def process_transcription_folder(pasta_transcricoes):
                         "pontuacao_total": 0,
                         "pontuacao_percentual": 0
                     }
-            
-            # Adiciona campos necessários se faltando
             avaliacao['id_chamada'] = avaliacao.get('id_chamada', id_chamada)
             avaliacao['itens'] = avaliacao.get('itens', {})
             avaliacao['pontuacao_percentual'] = avaliacao.get('pontuacao_percentual', 0)
-            
-            # Não salva transcrição no banco neste fluxo!
-            # Apenas avalia e registra os itens avaliados, sem inserir transcrição
+            # Salva transcrição no banco junto com a avaliação!
             try:
-                salvar_avaliacao_no_banco(avaliacao, transcricao_texto=None)
-                print(f"[DEBUG] Inserção no banco concluída para {id_chamada} (sem transcrição)")
-                # Move arquivos somente se a inserção no banco foi bem-sucedida
+                salvar_avaliacao_no_banco(avaliacao, transcricao_texto=conteudo_transcricao)
+                print(f"[DEBUG] Inserção no banco concluída para {id_chamada} (com transcrição)")
                 caminho_destino = os.path.join(pasta_transcricoes_avaliadas, arquivo)
                 shutil.copy2(caminho_transcricao, caminho_destino)
                 os.remove(caminho_transcricao)
