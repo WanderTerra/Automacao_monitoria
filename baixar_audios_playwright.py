@@ -5,11 +5,14 @@ import mysql.connector
 from playwright.sync_api import sync_playwright
 from datetime import datetime, timedelta
 
+# URLs e credenciais do site
 LOGIN_URL = 'https://portesmarinho.vonixcc.com.br/login/signin'
 DOWNLOAD_URL = 'https://portesmarinho.vonixcc.com.br/recordings/{}'
 USERNAME = 'kayro'
 PASSWORD = '@Kl.#306'
-PASTA_DESTINO = r'C:\Users\wanderley.terra\Documents\Audios_monitoria'
+
+# Pasta base onde os áudios serão salvos
+BASE_PASTA = r'C:\Users\wanderley.terra\Documents\Audios_monitoria'
 
 # Configuração do banco de dados
 DB_CONFIG = {
@@ -22,36 +25,44 @@ DB_CONFIG = {
     'collation': 'utf8mb4_unicode_ci',
 }
 
-def obter_datas_para_sql():
-    hoje = datetime.now()
-    if hoje.weekday() == 0:  # Segunda-feira
-        dia_busca = hoje - timedelta(days=2)  # Sábado
-    else:
-        dia_busca = hoje - timedelta(days=1)  # Dia anterior
-    data_inicio = dia_busca.replace(hour=0, minute=0, second=0, microsecond=0)
-    data_fim = data_inicio + timedelta(days=1)
-    return data_inicio.strftime('%Y-%m-%d %H:%M:%S'), data_fim.strftime('%Y-%m-%d %H:%M:%S')
-
-# Atualiza a query dinamicamente
-DATA_INICIO, DATA_FIM = obter_datas_para_sql()
-SQL_QUERY = f'''
+# Configurações para as carteiras. Agora as pastas "Águas Guariroba" e "Vuon"
+# ficam no mesmo nível dentro de BASE_PASTA.
+CONFIG_CARTEIRAS = [
+    {
+        "nome": "aguas_guariroba",
+        "sql_query": '''
 SELECT call_id, queue_id, start_time, answer_time, hangup_time, call_secs
 FROM vonix.calls AS c
 WHERE queue_id LIKE 'aguas%'
-  AND queue_id NOT LIKE 'aguasguariroba%'
-  AND status LIKE 'Completada%'
-  AND start_time >= '{DATA_INICIO}'
-  AND start_time < '{DATA_FIM}'
-  AND call_secs > 60
+    AND queue_id NOT LIKE 'aguasguariroba%'
+    AND status LIKE 'Completada%'
+    AND start_time >= '2025-05-24 00:00:00'
+    AND call_secs > 60
 ORDER BY start_time DESC
-'''
+''',
+        "pasta_destino": os.path.join(BASE_PASTA, "Águas Guariroba")
+    },
+    {
+        "nome": "vuon",
+        "sql_query": '''
+SELECT call_id, queue_id, start_time, answer_time, hangup_time, call_secs
+FROM vonix.calls AS c
+WHERE queue_id LIKE 'vuon%'
+    AND status LIKE 'Completada%'
+    AND start_time >= '2025-05-24 00:00:00'
+    AND call_secs > 60
+ORDER BY start_time DESC
+''',
+        "pasta_destino": os.path.join(BASE_PASTA, "Vuon")
+    }
+]
 
-def buscar_call_ids_do_banco():
+def buscar_call_ids_do_banco(sql_query):
     call_ids = []
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
-        cursor.execute(SQL_QUERY)
+        cursor.execute(sql_query)
         rows = cursor.fetchall()
         for row in rows:
             call_ids.append(row[0])
@@ -62,21 +73,21 @@ def buscar_call_ids_do_banco():
         print(f"Erro ao consultar banco: {e}")
     return call_ids
 
-def salvar_mapeamento_call_ids(mapeamento):
-    arquivo_mapeamento = os.path.join(PASTA_DESTINO, 'mapeamento_call_ids.csv')
+def salvar_mapeamento_call_ids(mapeamento, pasta_destino):
+    arquivo_mapeamento = os.path.join(pasta_destino, 'mapeamento_call_ids.csv')
     with open(arquivo_mapeamento, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['nome_arquivo', 'call_id'])
         for nome_arquivo, call_id in mapeamento.items():
             writer.writerow([nome_arquivo, call_id])
-    print(f'Mapeamento salvo em: {arquivo_mapeamento}')
+    print(f"Mapeamento salvo em: {arquivo_mapeamento}")
 
-def baixar_audios_com_playwright(call_ids):
-    if not os.path.exists(PASTA_DESTINO):
-        os.makedirs(PASTA_DESTINO)
+def baixar_audios_com_playwright(call_ids, pasta_destino):
+    # Cria a pasta de destino, se não existir
+    if not os.path.exists(pasta_destino):
+        os.makedirs(pasta_destino)
     
-    mapeamento = {}
-    
+    mapeamento = {}    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         context = browser.new_context(accept_downloads=True)
@@ -96,19 +107,22 @@ def baixar_audios_com_playwright(call_ids):
                     page.evaluate(f"window.location.href = '{url}'")
                 download = download_info.value
                 nome_arquivo = download.suggested_filename
-                caminho_arquivo = os.path.join(PASTA_DESTINO, nome_arquivo)
+                caminho_arquivo = os.path.join(pasta_destino, nome_arquivo)
                 download.save_as(caminho_arquivo)
                 mapeamento[nome_arquivo] = call_id
-                print(f'Áudio salvo: {caminho_arquivo} (call_id: {call_id})')
+                print(f"Áudio salvo: {caminho_arquivo} (call_id: {call_id})")
             except Exception as e:
-                print(f'Falha ao baixar {call_id}: {e}')
+                print(f"Falha ao baixar {call_id}: {e}")
         browser.close()
     
-    salvar_mapeamento_call_ids(mapeamento)
+    salvar_mapeamento_call_ids(mapeamento, pasta_destino)
 
 if __name__ == '__main__':
-    call_ids = buscar_call_ids_do_banco()
-    if not call_ids:
-        print("Nenhum call_id encontrado na consulta SQL.")
-    else:
-        baixar_audios_com_playwright(call_ids)
+    # Para cada carteira, busca os call_ids e baixa os áudios na pasta específica
+    for config in CONFIG_CARTEIRAS:
+        print(f"\nProcessando carteira: {config['nome']}")
+        call_ids = buscar_call_ids_do_banco(config['sql_query'])
+        if not call_ids:
+            print(f"Nenhum call_id encontrado para a carteira {config['nome']}.")
+        else:
+            baixar_audios_com_playwright(call_ids, config['pasta_destino'])

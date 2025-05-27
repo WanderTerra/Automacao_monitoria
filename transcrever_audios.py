@@ -479,7 +479,8 @@ def corrigir_portes_advogados(texto):
         r'pai dos advogados',
         r'porto advogados',
         r'porta de jogados',
-        r'parque dos advogados'
+        r'parque dos advogados',
+        r'portas de vogadas'
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Portes Advogados', texto, flags=re.IGNORECASE)
@@ -548,7 +549,7 @@ def classificar_falantes_com_gpt(texto_transcricao):
         Analise esta transcrição de uma ligação de cobrança e identifique quem está falando em cada momento.
         
         Regras para identificar os falantes:
-        - O Cliente geralmente inicia com "Alô", pergunta "quem é" ou "quem fala", e responde às perguntas
+        - O Cliente geralmente inicia com 'Alô', pergunta 'quem é' ou 'quem fala' ou 'de onde fala', e responde às perguntas
         - O Agente pergunta o nome do cliente. Ex:'Boa tarde, falo com a Giovana?' ou 'Falo com Raimundo?'
         - O Cliente pergunta o valor da dívida'
         - O Agente informa o valor da dívida'
