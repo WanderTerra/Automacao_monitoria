@@ -1095,19 +1095,19 @@ if __name__ == '__main__':
     # Configuração da carteira Águas Guariroba
     config_aguas = CarteiraConfig(
         nome='aguas_guariroba',
-        pasta_audios=r'C:\Users\wanderley.terra\Documents\Audios_monitoria',
+        pasta_audios=r'C:\Users\wanderley.terra\Documents\Audios_monitoria\Águas Guariroba',
         pasta_transcricoes=os.path.join(r'C:\Users\wanderley.terra\Documents\Audios_monitoria', 'Transcrições_aguas'),
         prompt_avaliacao=SYSTEM_PROMPT
     )
     processador_aguas = ProcessadorCarteira(config_aguas)
     processador_aguas.executar()
 
-    # Exemplo de outra carteira (descomente e ajuste para usar)
-    # config_outra = CarteiraConfig(
-    #     nome='outra_carteira',
-    #     pasta_audios=r'C:\Users\wanderley.terra\Documents\Audios_monitoria\OutraCarteira',
-    #     pasta_transcricoes=os.path.join(r'C:\Users\wanderley.terra\Documents\Audios_monitoria\OutraCarteira', 'Transcrições_outra'),
-    #     prompt_avaliacao='Seu prompt específico para outra carteira aqui'
-    # )
-    # processador_outra = ProcessadorCarteira(config_outra)
-    # processador_outra.executar()
+    # Configuração da carteira VUON
+    config_vuon = CarteiraConfig(
+        nome='vuon',
+        pasta_audios=r'C:\Users\wanderley.terra\Documents\Audios_monitoria\Vuon',
+        pasta_transcricoes=os.path.join(r'C:\Users\wanderley.terra\Documents\Audios_monitoria\Vuon', 'Transcrições_vuon'),
+        prompt_avaliacao='Seu prompt específico para a carteira VUON aqui'
+    )
+    processador_vuon = ProcessadorCarteira(config_vuon)
+    processador_vuon.executar()
