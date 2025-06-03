@@ -141,7 +141,7 @@ def extrair_descricao_e_peso(categoria: str, arquivo_resumo: str) -> tuple:
     
     return '', 0.0
 
-def salvar_avaliacao_no_banco(avaliacao: dict, transcricao_texto: str = None):
+def salvar_avaliacao_no_banco(avaliacao: dict, transcricao_texto: str = None, carteira: str = 'AGUAS'):
     conn = None
     cursor = None
     try:        
@@ -199,7 +199,7 @@ def salvar_avaliacao_no_banco(avaliacao: dict, transcricao_texto: str = None):
         print(f"- data_ligacao: {data_ligacao}")
         print(f"- status_avaliacao: {status_avaliacao}")
         print(f"- pontuacao: {pontuacao}")
-        print(f"- carteira: AGUAS")
+        print(f"- carteira: {carteira}")
         
         print("\nTABELA itens_avaliados:")
         for categoria, item in avaliacao.get('itens', {}).items():
@@ -231,7 +231,7 @@ def salvar_avaliacao_no_banco(avaliacao: dict, transcricao_texto: str = None):
             raise ValueError(f"Não foi possível encontrar o call_id original para {id_chamada}")
         
         agent_id = extrair_agent_id(id_chamada)
-        carteira = 'AGUAS'  # Valor fixo para este contexto
+        # carteira agora é parâmetro
 
         # Inserir na tabela avaliacoes
         sql_avaliacao = """
@@ -359,15 +359,16 @@ def _get_client() -> OpenAI:
     return _CLIENT
 
 MAX_SEM_GSS = 9.60 #Trocar para 10 no prompt quando a pontuação do GSS for inserida
-# ─── PROMPT‑TEMPLATE PARA AVALIAÇÃO DE LIGAÇÕES ────────────────────────────────────────
-SYSTEM_PROMPT = f"""
+# ─── PROMPTS DE AVALIAÇÃO POR CARTEIRA ──────────────────────────────────────────────
+PROMPTS_AVALIACAO = {
+    'aguas_guariroba': f"""
 Você é **MonitorGPT**, auditor de qualidade das ligações da carteira **Águas Guariroba** (Portes Advogados).
 
 ---
 ENUM `status`
 - **C**  → Conforme  
 - **NC** → Não Conforme  
-- **NA** → Não Se Aplica
+- **NA**  → Não Se Aplica
 
 FALHA CRÍTICA  
 Se detectar ofensa, vazamento de dado sensível ou transferência sem aviso: defina `falha_critica = true`.  
@@ -425,7 +426,105 @@ REGRAS DE CONFORMIDADE EXTRA (verificar além do checklist)
 3. Preencha `falha_critica` conforme definido.
 4. **Não** inclua campos de peso nem pontuações.
 5. **Responda SOMENTE** o JSON acima – sem Markdown, sem texto extra.
+""",
+    'vuon': f"""
+Você é **MonitorGPT**, auditor de qualidade das ligações da carteira **VUON** (Portes Advogados).
+
+---
+ENUM `status`
+- **C**  → Conforme  
+- **NC** → Não Conforme  
+- **NA** → Não Se Aplica
+
+FALHA CRÍTICA  
+Se detectar ofensa, vazamento de dado sensível ou transferência sem aviso: `falha_critica = true`.  
+Caso contrário: `falha_critica = false`.
+
+---
+CHECKLIST DE AVALIAÇÃO (12 sub‑itens)
+
+1. **Abordagem** `abordagem_atendeu`  
+→ Deve identificar-se como “NOME + Portes Advogados assessoria representante do VUON CARD”.
+
+2. **Segurança** `seguranca_info_corretas`  
+→ Confirmar nome completo ou CPF antes de negociar. Não prometer reativação automática.
+
+3. **Fraseologia** `fraseologia_explica_motivo`  
+→ Se aplicável: explicar ausência/transferência, negativa na Boa Vista e reativação sob nova análise.
+
+4. **Comunicação** `comunicacao_tom_adequado`  
+→ Linguagem clara e objetiva; explicar descontos, parcelamento, juros corretamente.
+
+5. **Cordialidade** `cordialidade_respeito`  
+→ Acolhedor e respeitoso; sem pressão ou comentários impróprios.
+
+6. **Empatia** `empatia_genuina`  
+→ Reconhecer dificuldades do cliente (“imprevistos acontecem”); demonstrar acolhimento.
+
+7. **Escuta Ativa** `escuta_sem_interromper`  
+→ Ouvir dúvidas/objeções, especialmente sobre: descontos, reativação, negativação, parcelamento.
+
+8. **Clareza & Objetividade** `clareza_direta`  
+→ Oferta direta: valor integral, desconto, parcelamento ≥ 10% de entrada e parcelas ≥ R$ 20,00.
+
+9. **Oferta de Solução** `oferta_valores_corretos` *(se cliente permitir)*  
+→ Ofertar valores e condições conforme faixa de atraso e regras da base.
+
+10. **Confirmação de Aceite** `confirmacao_aceite` *(se houve negociação)*  
+→ Confirmar “sim, aceito/confirmo” antes de gerar boleto.
+
+11. **Reforço de Prazo** `reforco_prazo` *(se fechou acordo)*  
+→ Reforçar: “Pagamento até X às 18h ou desconto será perdido”.
+
+12. **Encerramento** `encerramento_agradece` *(se fechou acordo)*  
+→ Perguntar se o número tem WhatsApp antes de enviar boleto. Agradecer e encerrar cordialmente.
+
+---
+REGRAS DE CONFORMIDADE EXTRA
+- Identificar-se corretamente (NOME + Portes Advogados + VUON CARD).
+- Confirmar nome completo ou CPF antes da proposta.
+- Ofertar valor integral, desconto, parcelamento ≥ 10% de entrada e parcelas ≥ R$ 20,00.
+- Priorizar pagamento à vista; se parcelado, reduzir número de parcelas em relação a negociações anteriores.
+- Seguir faixas de desconto da tabela oficial.
+- Não garantir reativação imediata; informar que depende de nova análise.
+- Negativação ocorre apenas na Boa Vista.
+- Informar juros/encargos se questionado.
+- Confirmar se o número tem WhatsApp antes de enviar boleto.
+- Reforçar prazo: “até X às 18h ou perde desconto”.
+- Se o cliente alegar desconhecer a dívida: encaminhar para análise e retorno em até 5 dias úteis.
+
+---
+## SCHEMA DE SAÍDA (JSON)
+```json
+{{
+  "id_chamada": "string",
+  "avaliador": "MonitorGPT",
+  "falha_critica": false,
+  "itens": {{
+    "abordagem_atendeu":        {{"status": "C|NC|NA", "observacao": ""}},
+    "seguranca_info_corretas":  {{"status": "C|NC|NA", "observacao": ""}},
+    "fraseologia_explica_motivo": {{"status": "C|NC|NA", "observacao": ""}},
+    "comunicacao_tom_adequado": {{"status": "C|NC|NA", "observacao": ""}},
+    "cordialidade_respeito":    {{"status": "C|NC|NA", "observacao": ""}},
+    "empatia_genuina":          {{"status": "C|NC|NA", "observacao": ""}},
+    "escuta_sem_interromper":   {{"status": "C|NC|NA", "observacao": ""}},
+    "clareza_direta":           {{"status": "C|NC|NA", "observacao": ""}},
+    "oferta_valores_corretos":  {{"status": "C|NC|NA", "observacao": ""}},
+    "confirmacao_aceite":       {{"status": "C|NC|NA", "observacao": ""}},
+    "reforco_prazo":            {{"status": "C|NC|NA", "observacao": ""}},
+    "encerramento_agradece":    {{"status": "C|NC|NA", "observacao": ""}}
+  }}
+}}
+```
+
+⚠️ **Instruções finais**
+1. Avalie cada sub‑item: escolha status `C`, `NC` ou `NA`.
+2. Preencha `observacao` com até 15 palavras (ou deixe string vazia).  
+3. Preencha `falha_critica` conforme definido.
+4. **Não** inclua campos de peso nem pontuações.
+5. **Responda SOMENTE** o JSON acima – sem Markdown, sem texto extra.
 """
+}
 
 # Inicializa o pipeline de Diarização do Pyannote.audio com tratamento de erros
 try:
@@ -480,7 +579,8 @@ def corrigir_portes_advogados(texto):
         r'porto advogados',
         r'porta de jogados',
         r'parque dos advogados',
-        r'portas de vogadas'
+        r'portas de vogadas',
+        r'porta advogado'
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Portes Advogados', texto, flags=re.IGNORECASE)
@@ -620,7 +720,7 @@ def process_audio_file(caminho_audio):
         print(f"Erro na transcrição: {e}")
         return None
 
-def process_audio_folder(pasta):
+def process_audio_folder(pasta, carteira='AGUAS'):
     global mapeamento_call_ids
     extensoes_audio = ['.mp3', '.wav', '.m4a', '.ogg', '.flac']
     arquivos = [f for f in os.listdir(pasta) if os.path.splitext(f)[1].lower() in extensoes_audio]
@@ -628,7 +728,13 @@ def process_audio_folder(pasta):
         print('Nenhum arquivo de áudio encontrado na pasta.')
         return
     pasta_audios_transcritos = os.path.join(pasta, 'Audios_transcritos')
-    pasta_transcricoes = os.path.join(pasta, 'Transcrições_aguas')
+    
+    # Determina a pasta de transcrições com base na carteira
+    if carteira.lower() == 'vuon':
+        pasta_transcricoes = os.path.join(pasta, 'Transcrições_vuon')
+    else:
+        pasta_transcricoes = os.path.join(pasta, 'Transcrições_aguas')
+    
     pasta_erros = os.path.join(pasta, 'Audios_erros')
     os.makedirs(pasta_audios_transcritos, exist_ok=True)
     os.makedirs(pasta_transcricoes, exist_ok=True)
@@ -707,7 +813,7 @@ def format_time_now():
     from datetime import datetime
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def process_transcription_folder(pasta_transcricoes):
+def process_transcription_folder(pasta_transcricoes, prompt_avaliacao=None, carteira='AGUAS'):
     if not os.path.exists(pasta_transcricoes):
         print(f"Pasta de transcrições não encontrada: {pasta_transcricoes}")
         return
@@ -740,7 +846,7 @@ def process_transcription_folder(pasta_transcricoes):
                 conteudo_transcricao = f.read()
             
             # Garantir que a avaliação retorne um dicionário
-            avaliacao = avaliar_ligacao(conteudo_transcricao, id_chamada=id_chamada)
+            avaliacao = avaliar_ligacao(conteudo_transcricao, id_chamada=id_chamada, prompt_avaliacao=prompt_avaliacao)
             if isinstance(avaliacao, str):
                 try:
                     avaliacao = json.loads(avaliacao)
@@ -759,7 +865,7 @@ def process_transcription_folder(pasta_transcricoes):
             avaliacao['pontuacao_percentual'] = avaliacao.get('pontuacao_percentual', 0)
             # Salva transcrição no banco junto com a avaliação!
             try:
-                salvar_avaliacao_no_banco(avaliacao, transcricao_texto=conteudo_transcricao)
+                salvar_avaliacao_no_banco(avaliacao, transcricao_texto=conteudo_transcricao, carteira=carteira)
                 print(f"[DEBUG] Inserção no banco concluída para {id_chamada} (com transcrição)")
                 caminho_destino = os.path.join(pasta_transcricoes_avaliadas, arquivo)
                 shutil.copy2(caminho_transcricao, caminho_destino)
@@ -796,12 +902,13 @@ def process_transcription_folder(pasta_transcricoes):
             except Exception as move_error:
                 print(f"Erro ao mover a transcrição com falha: {move_error}")
 
-def avaliar_ligacao(transcricao: str, *, 
-                    id_chamada: str = "chamada‑sem‑id") -> Dict[str, Any]:
+def avaliar_ligacao(transcricao: str, *, id_chamada: str = "chamada‑sem‑id", prompt_avaliacao: str = None) -> Dict[str, Any]:
     client = _get_client()
+    if prompt_avaliacao is None:
+        prompt_avaliacao = SYSTEM_PROMPT  # fallback legacy
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": prompt_avaliacao},
         {"role": "user",
          "content": f"ID_CHAMADA={id_chamada}\n\nTRANSCRICAO:\n{transcricao}"}
     ]
@@ -1061,23 +1168,31 @@ def verificar_transcricoes_incompletas(pasta_audios, pasta_transcricoes):
 
 
 class CarteiraConfig:
-    def __init__(self, nome, pasta_audios, pasta_transcricoes, prompt_avaliacao):
+    def __init__(self, nome, pasta_audios, pasta_transcricoes):
         self.nome = nome
         self.pasta_audios = pasta_audios
         self.pasta_transcricoes = pasta_transcricoes
-        self.prompt_avaliacao = prompt_avaliacao
+        self.prompt_avaliacao = PROMPTS_AVALIACAO.get(nome, '')
+        
+        # Set the carteira value for database usage
+        if nome.lower() == 'aguas_guariroba':
+            self.carteira = 'AGUAS'
+        elif nome.lower() == 'vuon':
+            self.carteira = 'VUON'
+        else:
+            self.carteira = nome.upper()
 
-class ProcessadorCarteira:
+class ProcessadorCarteira:    
     def __init__(self, config: CarteiraConfig):
         self.config = config
         os.makedirs(self.config.pasta_audios, exist_ok=True)
         os.makedirs(self.config.pasta_transcricoes, exist_ok=True)
-
+        
     def processar_audios(self):
-        process_audio_folder(self.config.pasta_audios)
+        process_audio_folder(self.config.pasta_audios, carteira=self.config.carteira)
 
     def processar_transcricoes(self):
-        process_transcription_folder(self.config.pasta_transcricoes)
+        process_transcription_folder(self.config.pasta_transcricoes, prompt_avaliacao=self.config.prompt_avaliacao, carteira=self.config.carteira)
 
     def gerar_relatorio(self):
         pasta_avaliacoes = os.path.join(self.config.pasta_transcricoes, 'Transcrições_avaliadas')
@@ -1096,8 +1211,7 @@ if __name__ == '__main__':
     config_aguas = CarteiraConfig(
         nome='aguas_guariroba',
         pasta_audios=r'C:\Users\wanderley.terra\Documents\Audios_monitoria\Águas Guariroba',
-        pasta_transcricoes=os.path.join(r'C:\Users\wanderley.terra\Documents\Audios_monitoria', 'Transcrições_aguas'),
-        prompt_avaliacao=SYSTEM_PROMPT
+        pasta_transcricoes=os.path.join(r'C:\Users\wanderley.terra\Documents\Audios_monitoria\Águas Guariroba', 'Transcrições_aguas')
     )
     processador_aguas = ProcessadorCarteira(config_aguas)
     processador_aguas.executar()
@@ -1106,8 +1220,7 @@ if __name__ == '__main__':
     config_vuon = CarteiraConfig(
         nome='vuon',
         pasta_audios=r'C:\Users\wanderley.terra\Documents\Audios_monitoria\Vuon',
-        pasta_transcricoes=os.path.join(r'C:\Users\wanderley.terra\Documents\Audios_monitoria\Vuon', 'Transcrições_vuon'),
-        prompt_avaliacao='Seu prompt específico para a carteira VUON aqui'
+        pasta_transcricoes=os.path.join(r'C:\Users\wanderley.terra\Documents\Audios_monitoria\Vuon', 'Transcrições_vuon')
     )
     processador_vuon = ProcessadorCarteira(config_vuon)
     processador_vuon.executar()
