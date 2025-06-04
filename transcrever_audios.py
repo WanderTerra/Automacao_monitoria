@@ -447,7 +447,7 @@ CHECKLIST DE AVALIAÇÃO (12 sub‑itens)
 → Deve identificar-se como “NOME + Portes Advogados assessoria representante do VUON CARD”.
 
 2. **Segurança** `seguranca_info_corretas`  
-→ Confirmar nome completo ou CPF antes de negociar. Não prometer reativação automática.
+→ Confirmar nome completo, apenas sobrenome ou CPF antes de negociar.
 
 3. **Fraseologia** `fraseologia_explica_motivo`  
 → Se aplicável: explicar ausência/transferência, negativa na Boa Vista e reativação sob nova análise.
@@ -584,6 +584,69 @@ def corrigir_portes_advogados(texto):
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Portes Advogados', texto, flags=re.IGNORECASE)
+    return texto
+
+def corrigir_vuon_card(texto):
+    """
+    Corrige variações comuns de transcrição para 'VUON CARD'.
+    """
+    padroes = [
+        r'vuom card',
+        r'voom card',
+        r'von card',
+        r'vuan card',
+        r'buon card',
+        r'buan card',
+        r'buom card',
+        r'vu on card',
+        r'vo on card',
+        r'voom car',
+        r'vuom car',
+        r'von car',
+        r'vuan car',
+        r'vu on',
+        r'vuon carde',
+        r'vuom carde',
+        r'vuan carde',
+        r'cartão vuon',
+        r'cartão vuan',
+        r'cartão vuom',
+        r'cartão vom',
+        r'voncard',
+        r'von card'   
+    ]
+    for padrao in padroes:
+        texto = re.sub(padrao, 'VUON CARD', texto, flags=re.IGNORECASE)
+    return texto
+
+def corrigir_aguas_guariroba(texto):
+    """
+    Corrige variações comuns de transcrição para 'Águas Guariroba'.
+    """
+    padroes = [
+        r'águas guariroba',
+        r'aguas guariroba',
+        r'água guariroba',
+        r'agua guariroba',
+        r'águas guari roba',
+        r'aguas guari roba',
+        r'águas gari roba',
+        r'aguas gari roba',
+        r'águas guarirouba',
+        r'aguas guarirouba',
+        r'águas guari rouba',
+        r'aguas guari rouba',
+        r'águas guari robo',
+        r'aguas guari robo',
+        r'águas gariroba',
+        r'aguas gariroba',
+        r'águas guarirobo',
+        r'aguas guarirobo',
+        r'água gariroba',
+        r'agua gariroba'
+    ]
+    for padrao in padroes:
+        texto = re.sub(padrao, 'Águas Guariroba', texto, flags=re.IGNORECASE)
     return texto
 
 def parse_vtt(vtt_text):
@@ -753,10 +816,12 @@ def process_audio_folder(pasta, carteira='AGUAS'):
         final_text = process_audio_file(caminho_audio)
         nome_base = os.path.splitext(arquivo)[0]
         caminho_destino = os.path.join(pasta_audios_transcritos, arquivo)
-        try:
+        try:            
             if final_text:
-                # Corrigir variações de "Portes Advogados" antes da classificação dos falantes
+                # Corrigir variações de "Portes Advogados", "VUON CARD" e "Águas Guariroba" antes da classificação dos falantes
                 final_text_corrigido = corrigir_portes_advogados(final_text)
+                final_text_corrigido = corrigir_vuon_card(final_text_corrigido)
+                final_text_corrigido = corrigir_aguas_guariroba(final_text_corrigido)
                 try:
                     final_text_identificado = classificar_falantes_com_gpt(final_text_corrigido)
                 except Exception as e:
