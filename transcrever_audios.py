@@ -1,21 +1,24 @@
+import csv
+import glob
 import json
 import os
 import re
-import sys
-import time
-import csv
-import glob
 import shutil
-from pathlib import Path
+import subprocess
+import sys
+import tempfile
+import time
 from datetime import datetime
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
-import openai
-from openai import OpenAI
-from pydub.utils import mediainfo
 import mysql.connector
 from mysql.connector import Error as MySQLError
+import openai
+from openai import OpenAI
+from pydub import AudioSegment
+from pydub.utils import mediainfo
 
 # Configuração do banco de dados
 DB_CONFIG = {
