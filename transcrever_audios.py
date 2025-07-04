@@ -598,6 +598,7 @@ def corrigir_vuon_card(texto):
         r'buon card',
         r'buan card',
         r'buom card',
+        r'bom card',
         r'vu on card',
         r'vo on card',
         r'voom car',
@@ -609,11 +610,15 @@ def corrigir_vuon_card(texto):
         r'vuom carde',
         r'vuan carde',
         r'cartão vuon',
+        r'cartão vão',
         r'cartão vuan',
         r'cartão vuom',
         r'cartão vom',
+        r'cartão von',
+        r'cartão bom',
         r'voncard',
-        r'von card'   
+        r'blomcard',
+        r'von card'
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'VUON CARD', texto, flags=re.IGNORECASE)
@@ -643,6 +648,8 @@ def corrigir_aguas_guariroba(texto):
         r'águas guarirobo',
         r'aguas guarirobo',
         r'água gariroba',
+        r'águas claridobas',
+        r'águas do aeroba',
         r'agua gariroba'
     ]
     for padrao in padroes:
