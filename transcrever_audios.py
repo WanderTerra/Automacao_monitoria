@@ -1,22 +1,21 @@
-import csv
-import glob
 import json
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
-from datetime import datetime
+import time
+import csv
+import glob
+import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime
+from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
-import mysql.connector
-from mysql.connector import Error as MySQLError
 import openai
 from openai import OpenAI
-from pydub import AudioSegment
+from pydub.utils import mediainfo
+import mysql.connector
+from mysql.connector import Error as MySQLError
 
 # Configuração do banco de dados
 DB_CONFIG = {
@@ -448,7 +447,7 @@ CHECKLIST DE AVALIAÇÃO (12 sub‑itens)
 → Deve identificar-se como “NOME + Portes Advogados assessoria representante do VUON CARD”.
 
 2. **Segurança** `seguranca_info_corretas`  
-→ Confirmar ultimo sobrenome ou CPF antes de negociar.
+→ Confirmar nome completo, apenas sobrenome ou CPF antes de negociar.
 
 3. **Fraseologia** `fraseologia_explica_motivo`  
 → Se aplicável: explicar ausência/transferência, negativa na Boa Vista e reativação sob nova análise.
@@ -581,8 +580,7 @@ def corrigir_portes_advogados(texto):
         r'porta de jogados',
         r'parque dos advogados',
         r'portas de vogadas',
-        r'porta advogado',
-        r'Poisa Advogados'
+        r'porta advogado'
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Portes Advogados', texto, flags=re.IGNORECASE)
@@ -600,7 +598,6 @@ def corrigir_vuon_card(texto):
         r'buon card',
         r'buan card',
         r'buom card',
-        r'bom card',
         r'vu on card',
         r'vo on card',
         r'voom car',
@@ -612,18 +609,11 @@ def corrigir_vuon_card(texto):
         r'vuom carde',
         r'vuan carde',
         r'cartão vuon',
-        r'cartão vão',
         r'cartão vuan',
         r'cartão vuom',
         r'cartão vom',
-        r'cartão von',
-        r'cartão bom',
         r'voncard',
-        r'blomcard',
-        r'von card',
-        r'vamoCard',
-        r'vonkaj'
-
+        r'von card'   
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'VUON CARD', texto, flags=re.IGNORECASE)
@@ -653,36 +643,11 @@ def corrigir_aguas_guariroba(texto):
         r'águas guarirobo',
         r'aguas guarirobo',
         r'água gariroba',
-        r'águas claridobas',
-        r'águas do aeroba',
-        r'agua gariroba',
-        r'águas do Aliróba',
-        r'aguas do Aliróba',
-        r'aguas do aeroba',
-        r'Águas Guaridó',
-        r'águas aeróbicas',
-        r'Águas Marirobas',
-        r'águas de Badirobas',
-        r'águas Larirobas',
-        r'Água do Loro de Oba',
-        r'águas do guarda-roupa',
-        r'água saíroba'
+        r'agua gariroba'
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Águas Guariroba', texto, flags=re.IGNORECASE)
     return texto
-
-def corrigir_assessoria_juridica(texto):
-    """
-    Corrige variações comuns de transcrição para 'assessoria jurídica'.
-    """
-    padroes = [
-        r'turia jurídica',
-        r'Seria Jurídica',
-        r'Sereia Juridica'
-    ]
-    for padrao in padroes:
-        texto = re.sub(padrao, 'assessoria jurídica', texto, flags=re.IGNORECASE)
 
 def parse_vtt(vtt_text):
     """
@@ -804,6 +769,14 @@ def process_audio_file(caminho_audio):
             print(f"Conteúdo: {transcription_response}")
             return None
         
+        # Verificar se a transcrição parece muito curta em relação ao áudio
+        duracao = calcular_duracao_audio_robusto(caminho_audio)
+        if duracao > 60:  # Só verifica áudios com mais de 1 minuto
+            n_palavras = len(text.split())
+            taxa_palavras = n_palavras / duracao
+            if taxa_palavras < 1.5:  # Menos de 1.5 palavras por segundo é suspeito
+                print(f"ALERTA: Transcrição potencialmente incompleta: {n_palavras} palavras em {duracao:.1f}s ({taxa_palavras:.2f} palavras/seg)")
+        
         print("Transcrição concluída!")
         return text
     except Exception as e:
@@ -839,6 +812,7 @@ def process_audio_folder(pasta, carteira='AGUAS'):
     for arquivo in arquivos:
         caminho_audio = os.path.join(pasta, arquivo)
         print(f"Processando: {arquivo}")
+        tempo_inicio = time.time()  # Marca o início do processamento do áudio
         final_text = process_audio_file(caminho_audio)
         nome_base = os.path.splitext(arquivo)[0]
         caminho_destino = os.path.join(pasta_audios_transcritos, arquivo)
@@ -848,7 +822,6 @@ def process_audio_folder(pasta, carteira='AGUAS'):
                 final_text_corrigido = corrigir_portes_advogados(final_text)
                 final_text_corrigido = corrigir_vuon_card(final_text_corrigido)
                 final_text_corrigido = corrigir_aguas_guariroba(final_text_corrigido)
-                final_text_corrigido = corrigir_assessoria_juridica(final_text_corrigido)
                 try:
                     final_text_identificado = classificar_falantes_com_gpt(final_text_corrigido)
                 except Exception as e:
@@ -873,6 +846,9 @@ def process_audio_folder(pasta, carteira='AGUAS'):
                     with open(caminho_txt, 'w', encoding='utf-8') as f:
                         f.write(final_text_identificado)
                     print(f"Transcrição salva em arquivo: {caminho_txt}")
+                    # Salva o tempo de início do processamento para uso posterior
+                    with open(caminho_txt + '.start', 'w') as f:
+                        f.write(str(tempo_inicio))
                 except Exception as e:
                     print(f"Erro ao salvar transcrição em arquivo: {e}")
             else:
@@ -883,6 +859,7 @@ def process_audio_folder(pasta, carteira='AGUAS'):
                     log_path = os.path.join(pasta_erros, f"{os.path.splitext(arquivo)[0]}_erro.txt")
                     with open(log_path, 'w', encoding='utf-8') as log_file:
                         log_file.write(f"Erro ao processar o arquivo {arquivo}\n")
+                        log_file.write(f"Data/hora: {format_time_now()}\n")
                         log_file.write(f"Falha na transcrição ou identificação de falantes")
                 except Exception as move_error:
                     print(f"Erro ao mover o arquivo com falha: {move_error}")
@@ -896,6 +873,10 @@ def process_audio_folder(pasta, carteira='AGUAS'):
                 except Exception as e:
                     print(f"Erro ao mover o arquivo de áudio: {e}")
 
+
+def format_time_now():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def process_transcription_folder(pasta_transcricoes, prompt_avaliacao=None, carteira='AGUAS'):
     if not os.path.exists(pasta_transcricoes):
@@ -960,6 +941,7 @@ def process_transcription_folder(pasta_transcricoes, prompt_avaliacao=None, cart
                 log_path = os.path.join(pasta_transcricoes_erros, f"{id_chamada}_db_erro.txt")
                 with open(log_path, 'w', encoding='utf-8') as log_file:
                     log_file.write(f"Erro ao inserir avaliação no banco para {arquivo}\n")
+                    log_file.write(f"Data/hora: {format_time_now()}\n")
                     log_file.write(f"Erro: {str(db_exc)}\n")
                     log_file.write(f"Conteúdo da avaliação: {json.dumps(avaliacao, ensure_ascii=False)[:2000]}\n")
                 print(f"Log de erro de banco criado em: {log_path}")
@@ -979,6 +961,7 @@ def process_transcription_folder(pasta_transcricoes, prompt_avaliacao=None, cart
                 log_path = os.path.join(pasta_transcricoes_erros, f"{id_chamada}_erro.txt")
                 with open(log_path, 'w', encoding='utf-8') as log_file:
                     log_file.write(f"Erro ao avaliar a transcrição {arquivo}\n")
+                    log_file.write(f"Data/hora: {format_time_now()}\n")
                     log_file.write(f"Erro: {str(e)}")
                 print(f"Log de erro criado em: {log_path}")
             except Exception as move_error:
@@ -1147,6 +1130,106 @@ def gerar_csv_relatorio_avaliacoes(pasta_avaliacoes, csv_saida):
         writer.writerow(campos)
         writer.writerows(linhas)
     print(f"CSV consolidado gerado em: {csv_saida}")
+
+def calcular_duracao_audio_robusto(caminho_audio):
+    try:
+        info = mediainfo(caminho_audio)
+        duracao = float(info['duration'])
+        return duracao  # em segundos
+    except Exception as e:
+        print(f"Erro ao calcular duração de {caminho_audio}: {e}")
+        return 0
+
+def verificar_transcricoes_incompletas(pasta_audios, pasta_transcricoes):
+    """
+    Percorre todos os áudios e transcrições, compara duração do áudio e tamanho da transcrição.
+    Alerta se a transcrição parecer muito curta em relação ao áudio.
+    """
+    pasta_audios_transcritos = os.path.join(pasta_audios, 'Audios_transcritos')
+    pasta_transcricoes = os.path.join(pasta_transcricoes)
+    
+    print("\n=== VERIFICANDO POSSÍVEIS TRANSCRIÇÕES INCOMPLETAS ===")
+    
+    # Encontrar todos os arquivos de áudio
+    extensoes_audio = ['.mp3', '.wav', '.m4a', '.ogg', '.flac']
+    arquivos_audio = []
+    for ext in extensoes_audio:
+        arquivos_audio += glob.glob(os.path.join(pasta_audios_transcritos, f'*{ext}'))
+    
+    if not arquivos_audio:
+        print("Nenhum áudio transcrito encontrado para verificação.")
+        return
+    
+    problemas_encontrados = 0
+    relatorio = []
+    
+    for caminho_audio in arquivos_audio:
+        nome_base = os.path.splitext(os.path.basename(caminho_audio))[0]
+        caminho_txt = os.path.join(pasta_transcricoes, nome_base + '_diarizado.txt')
+        
+        if not os.path.exists(caminho_txt):
+            msg = f"ERRO: Transcrição não encontrada para: {nome_base}"
+            print(msg)
+            relatorio.append({
+                'arquivo': nome_base,
+                'problema': 'Transcrição não encontrada',
+                'duracao_audio': 'N/A',
+                'palavras': 0,
+                'taxa_palavras_seg': 0
+            })
+            problemas_encontrados += 1
+            continue
+        
+        duracao = calcular_duracao_audio_robusto(caminho_audio)
+        
+        with open(caminho_txt, 'r', encoding='utf-8') as f:
+            texto = f.read()
+        
+        # Calcula estatísticas
+        n_palavras = len(texto.split())
+        n_caracteres = len(texto)
+        taxa_palavras = n_palavras / duracao if duracao > 0 else 0
+        
+        # Heurísticas para detectar possíveis transcrições incompletas:
+        # 1. Menos de 1.5 palavras por segundo (ligação normal tem ~2-3 palavras/seg)
+        # 2. Menos de 9 caracteres por segundo
+        # 3. Áudio longo (>60s) com menos de 100 palavras
+        
+        problema = None
+        if duracao > 60 and n_palavras < 100:
+            problema = f"Áudio de {duracao:.1f}s tem apenas {n_palavras} palavras"
+        elif duracao > 0 and taxa_palavras < 1.5:
+            problema = f"Taxa baixa: {taxa_palavras:.2f} palavras/seg"
+        elif duracao > 0 and (n_caracteres / duracao) < 9:
+            problema = f"Poucos caracteres por segundo: {(n_caracteres/duracao):.2f}"
+            
+        if problema:
+            print(f"ALERTA: Possível transcrição incompleta: {nome_base}")
+            print(f"  Duração: {duracao:.1f}s, Palavras: {n_palavras}, Taxa: {taxa_palavras:.2f} palavras/seg")
+            print(f"  Problema: {problema}")
+            relatorio.append({
+                'arquivo': nome_base,
+                'problema': problema,
+                'duracao_audio': f"{duracao:.1f}",
+                'palavras': n_palavras,
+                'taxa_palavras_seg': f"{taxa_palavras:.2f}"
+            })
+            problemas_encontrados += 1
+    
+    # Gera relatório CSV se houver problemas
+    if problemas_encontrados > 0:
+        relatorio_csv = os.path.join(pasta_audios, 'relatorio_transcricoes_incompletas.csv')
+        with open(relatorio_csv, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=['arquivo', 'problema', 'duracao_audio', 'palavras', 'taxa_palavras_seg'])
+            writer.writeheader()
+            for linha in relatorio:
+                writer.writerow(linha)
+        print(f"\nEncontrados {problemas_encontrados} possíveis problemas de transcrição.")
+        print(f"Relatório detalhado salvo em: {relatorio_csv}")
+    else:
+        print("\nNenhum problema de transcrição detectado!")
+
+    return problemas_encontrados
 
 
 class CarteiraConfig:
