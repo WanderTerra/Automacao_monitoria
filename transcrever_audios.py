@@ -344,6 +344,10 @@ HUGGINGFACE_TOKEN = os.getenv('HUGGINGFACE_TOKEN')
 print(f"OPENAI_API_KEY configurada: {'Sim' if OPENAI_API_KEY else 'Não'}")
 print(f"HUGGINGFACE_TOKEN configurado: {'Sim' if HUGGINGFACE_TOKEN else 'Não'}")
 
+# Verificar se a chave da API foi carregada corretamente
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY não foi configurada. Verifique o arquivo .env")
+
 # Inicializa a API do Whisper da OpenAI (para transcrição)
 openai.api_key = OPENAI_API_KEY
 
@@ -353,6 +357,8 @@ _CLIENT: Optional[OpenAI] = None
 def _get_client() -> OpenAI:
     global _CLIENT
     if _CLIENT is None:
+        if not OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY não foi configurada. Verifique o arquivo .env")
         _CLIENT = OpenAI(
             api_key=OPENAI_API_KEY  # Usa a mesma chave já configurada para o projeto
         )
@@ -447,7 +453,7 @@ CHECKLIST DE AVALIAÇÃO (12 sub‑itens)
 → Deve identificar-se como “NOME + Portes Advogados assessoria representante do VUON CARD”.
 
 2. **Segurança** `seguranca_info_corretas`  
-→ Confirmar nome completo, apenas sobrenome ou CPF antes de negociar.
+→ Confirmar ultimo sobrenome ou CPF antes de negociar.
 
 3. **Fraseologia** `fraseologia_explica_motivo`  
 → Se aplicável: explicar ausência/transferência, negativa na Boa Vista e reativação sob nova análise.
@@ -580,7 +586,9 @@ def corrigir_portes_advogados(texto):
         r'porta de jogados',
         r'parque dos advogados',
         r'portas de vogadas',
-        r'porta advogado'
+        r'porta advogado',
+        r'poisa advogados',
+        r'porto de advogados'
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Portes Advogados', texto, flags=re.IGNORECASE)
@@ -598,6 +606,7 @@ def corrigir_vuon_card(texto):
         r'buon card',
         r'buan card',
         r'buom card',
+        r'bom card',
         r'vu on card',
         r'vo on card',
         r'voom car',
@@ -609,11 +618,18 @@ def corrigir_vuon_card(texto):
         r'vuom carde',
         r'vuan carde',
         r'cartão vuon',
+        r'cartão vão',
         r'cartão vuan',
         r'cartão vuom',
         r'cartão vom',
+        r'cartão von',
+        r'cartão bom',
         r'voncard',
-        r'von card'   
+        r'blomcard',
+        r'von card',
+        r'vamoCard',
+        r'vonkaj'
+
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'VUON CARD', texto, flags=re.IGNORECASE)
@@ -643,10 +659,38 @@ def corrigir_aguas_guariroba(texto):
         r'águas guarirobo',
         r'aguas guarirobo',
         r'água gariroba',
-        r'agua gariroba'
+        r'águas claridobas',
+        r'águas do aeroba',
+        r'agua gariroba',
+        r'águas do Aliróba',
+        r'aguas do Aliróba',
+        r'aguas do aeroba',
+        r'Águas Guaridó',
+        r'águas aeróbicas',
+        r'Águas Marirobas',
+        r'águas de Badirobas',
+        r'águas Larirobas',
+        r'Água do Loro de Oba',
+        r'águas do guarda-roupa',
+        r'água saíroba',
+        r'armas guariloba',
+        r'armas guariroba'
     ]
     for padrao in padroes:
         texto = re.sub(padrao, 'Águas Guariroba', texto, flags=re.IGNORECASE)
+    return texto
+
+def corrigir_assessoria_juridica(texto):
+    """
+    Corrige variações comuns de transcrição para 'assessoria jurídica'.
+    """
+    padroes = [
+        r'turia jurídica',
+        r'Seria Jurídica',
+        r'Sereia Juridica'
+    ]
+    for padrao in padroes:
+        texto = re.sub(padrao, 'assessoria jurídica', texto, flags=re.IGNORECASE)
     return texto
 
 def parse_vtt(vtt_text):
@@ -751,7 +795,10 @@ def classificar_falantes_com_gpt(texto_transcricao):
 def process_audio_file(caminho_audio):
     print(f"Transcrevendo com gpt-4o-transcribe: {caminho_audio}...")
     try:
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        if not OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY não foi configurada. Verifique o arquivo .env")
+            
+        client = OpenAI(api_key=OPENAI_API_KEY)
         with open(caminho_audio, 'rb') as audio_file:
             transcription_response = client.audio.transcriptions.create(
                 model="gpt-4o-transcribe",
@@ -822,6 +869,7 @@ def process_audio_folder(pasta, carteira='AGUAS'):
                 final_text_corrigido = corrigir_portes_advogados(final_text)
                 final_text_corrigido = corrigir_vuon_card(final_text_corrigido)
                 final_text_corrigido = corrigir_aguas_guariroba(final_text_corrigido)
+                final_text_corrigido = corrigir_assessoria_juridica(final_text_corrigido)
                 try:
                     final_text_identificado = classificar_falantes_com_gpt(final_text_corrigido)
                 except Exception as e:
