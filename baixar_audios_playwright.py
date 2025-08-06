@@ -36,7 +36,7 @@ FROM vonix.calls AS c
 WHERE queue_id LIKE '%aguas%'
     AND queue_id NOT LIKE 'aguasguariroba%'
     AND status LIKE 'Completada%'
-    AND start_time >= '2025-07-06 00:00:00'
+    AND start_time >= '2025-07-30 00:00:00'
     AND call_secs > 60
 ORDER BY start_time DESC
 ''',
@@ -49,11 +49,24 @@ SELECT call_id, queue_id, start_time, answer_time, hangup_time, call_secs
 FROM vonix.calls AS c
 WHERE queue_id LIKE '%vuon%'
     AND status LIKE 'Completada%'
-    AND start_time >= '2025-07-06 00:00:00'
+    AND start_time >= '2025-07-30 00:00:00'
     AND call_secs > 60
 ORDER BY start_time DESC
 ''',
         "pasta_destino": os.path.join(BASE_PASTA, "Vuon")
+    },
+    {
+        "nome": "unimed",
+        "sql_query": '''
+SELECT call_id, queue_id, start_time, answer_time, hangup_time, call_secs
+FROM vonix.calls AS c
+WHERE queue_id LIKE '%unimed%'
+    AND status LIKE 'Completada%'
+    AND start_time >= '2025-07-30 00:00:00'
+    AND call_secs > 60
+ORDER BY start_time DESC
+''',
+        "pasta_destino": os.path.join(BASE_PASTA, "Unimed")
     }
 ]
 

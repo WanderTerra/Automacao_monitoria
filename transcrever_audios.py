@@ -391,16 +391,16 @@ CHECKLIST DE AVALIAÇÃO (12 sub‑itens)
 7. **Escuta Ativa**           `escuta_sem_interromper` – Ouviu sem interromper, retomando pontos?
 8. **Clareza & Objetividade** `clareza_direta` – Explicações diretas, sem rodeios?
 9. **Oferta de Solução**      `oferta_valores_corretos` – Apresentou valores, descontos e opções corretamente? *(aplica‑se só se cliente permitir)*
-10. **Confirmação de Aceite** `confirmacao_aceite` – Confirmou negociação com “sim, aceito/confirmo”? *(aplica‑se só se houve negociação)*
+10. **Confirmação de Aceite** `confirmacao_aceite` – Confirmou negociação com "sim, aceito/confirmo"? *(aplica‑se só se houve negociação)*
 11. **Reforço de Prazo**      `reforco_prazo` – Reforçou data‑limite e perda de desconto? *(aplica‑se só se fechou acordo)*
-12. **Encerramento**          `encerramento_agradece` – Perguntou “Posso ajudar em algo mais?” e agradeceu? *(aplica‑se só se fechou acordo)*
+12. **Encerramento**          `encerramento_agradece` – Perguntou "Posso ajudar em algo mais?" e agradeceu? *(aplica‑se só se fechou acordo)*
 
 REGRAS DE CONFORMIDADE EXTRA (verificar além do checklist)
-- Identificar‑se: NOME + “Portes Advogados assessoria jurídica das Águas Guariroba”.
+- Identificar‑se: NOME + "Portes Advogados assessoria jurídica das Águas Guariroba".
 - Confirmar nome **ou** CPF **e** endereço antes da negociação.
-- Ofertar valor total, valor com desconto, entrada e parcelas ≥ R$ 20,00.
+- Ofertar valor total, valor com desconto, entrada e parcelas ≥ R$ 20,00.
 - Perguntar se o número tem WhatsApp antes de enviar boleto.
-- Reforçar: “Pagamento até X às 18h ou perderá o desconto”.
+- Reforçar: "Pagamento até X às 18h ou perderá o desconto".
 
 ---
 ## SCHEMA DE SAÍDA (JSON)
@@ -428,7 +428,7 @@ REGRAS DE CONFORMIDADE EXTRA (verificar além do checklist)
 
 ⚠️ **Instruções finais**
 1. Avalie cada sub‑item: escolha status `C`, `NC` ou `NA`.
-2. Preencha `observacao` com até 15 palavras (ou deixe string vazia).  
+2. Preencha `observacao` com até 15 palavras (ou deixe string vazia).  
 3. Preencha `falha_critica` conforme definido.
 4. **Não** inclua campos de peso nem pontuações.
 5. **Responda SOMENTE** o JSON acima – sem Markdown, sem texto extra.
@@ -450,7 +450,7 @@ Caso contrário: `falha_critica = false`.
 CHECKLIST DE AVALIAÇÃO (12 sub‑itens)
 
 1. **Abordagem** `abordagem_atendeu`  
-→ Deve identificar-se como “NOME + Portes Advogados assessoria representante do VUON CARD”.
+→ Deve identificar-se como "NOME + Portes Advogados assessoria representante do VUON CARD".
 
 2. **Segurança** `seguranca_info_corretas`  
 → Confirmar ultimo sobrenome ou CPF antes de negociar.
@@ -465,7 +465,7 @@ CHECKLIST DE AVALIAÇÃO (12 sub‑itens)
 → Acolhedor e respeitoso; sem pressão ou comentários impróprios.
 
 6. **Empatia** `empatia_genuina`  
-→ Reconhecer dificuldades do cliente (“imprevistos acontecem”); demonstrar acolhimento.
+→ Reconhecer dificuldades do cliente ("imprevistos acontecem"); demonstrar acolhimento.
 
 7. **Escuta Ativa** `escuta_sem_interromper`  
 → Ouvir dúvidas/objeções, especialmente sobre: descontos, reativação, negativação, parcelamento.
@@ -477,10 +477,10 @@ CHECKLIST DE AVALIAÇÃO (12 sub‑itens)
 → Ofertar valores e condições conforme faixa de atraso e regras da base.
 
 10. **Confirmação de Aceite** `confirmacao_aceite` *(se houve negociação)*  
-→ Confirmar “sim, aceito/confirmo” antes de gerar boleto.
+→ Confirmar "sim, aceito/confirmo" antes de gerar boleto.
 
 11. **Reforço de Prazo** `reforco_prazo` *(se fechou acordo)*  
-→ Reforçar: “Pagamento até X às 18h ou desconto será perdido”.
+→ Reforçar: "Pagamento até X às 18h ou desconto será perdido".
 
 12. **Encerramento** `encerramento_agradece` *(se fechou acordo)*  
 → Perguntar se o número tem WhatsApp antes de enviar boleto. Agradecer e encerrar cordialmente.
@@ -496,7 +496,7 @@ REGRAS DE CONFORMIDADE EXTRA
 - Negativação ocorre apenas na Boa Vista.
 - Informar juros/encargos se questionado.
 - Confirmar se o número tem WhatsApp antes de enviar boleto.
-- Reforçar prazo: “até X às 18h ou perde desconto”.
+- Reforçar prazo: "até X às 18h ou perde desconto".
 - Se o cliente alegar desconhecer a dívida: encaminhar para análise e retorno em até 5 dias úteis.
 
 ---
@@ -525,12 +525,98 @@ REGRAS DE CONFORMIDADE EXTRA
 
 ⚠️ **Instruções finais**
 1. Avalie cada sub‑item: escolha status `C`, `NC` ou `NA`.
-2. Preencha `observacao` com até 15 palavras (ou deixe string vazia).  
+2. Preencha `observacao` com até 15 palavras (ou deixe string vazia).  
+3. Preencha `falha_critica` conforme definido.
+4. **Não** inclua campos de peso nem pontuações.
+5. **Responda SOMENTE** o JSON acima – sem Markdown, sem texto extra.
+""",
+    'unimed': f"""
+Você é **MonitorGPT**, auditor de qualidade das ligações da carteira **UNIMED** (Portes Advogados).
+
+---
+ENUM `status`
+- **C**  → Conforme  
+- **NC** → Não Conforme  
+- **NA** → Não Se Aplica
+
+FALHA CRÍTICA  
+Se detectar ofensa, vazamento de dado sensível ou transferência sem aviso: `falha_critica = true`.  
+Caso contrário: `falha_critica = false`.
+
+---
+CHECKLIST DE AVALIAÇÃO (12 sub‑itens)
+
+1. **Abordagem** `abordagem_atendeu`  
+→ Cumprimentou (bom dia/tarde/noite), perguntou nome, se apresentou como assessoria de cobrança da UNIMED (não pode usar "assessoria jurídica"), perguntou se está tudo bem?
+
+2. **Confirmações de Segurança** `confirmacao_seguranca`  
+→ Confirmou 3 primeiros dígitos do CPF, 2 últimos, CPF completo, nome completo ou sobrenome.
+
+3. **Explicação do Motivo** `explicacao_motivo`  
+→ Explicou que o contato é referente a mensalidades em aberto com a Unimed.
+
+4. **Tom de Voz Adequado** `tom_voz_adequado`  
+→ Tom profissional, cordial, empático, sorridente.
+
+5. **Cordialidade e Respeito** `cordialidade_respeito`  
+→ Foi cordial e respeitoso.
+
+6. **Empatia com Cliente** `empatia_cliente`  
+→ Reconheceu dificuldades do cliente ("imprevistos acontecem"), demonstrou acolhimento.
+
+7. **Escuta Ativa** `escuta_ativa`  
+→ Ouviu o cliente sem interromper bruscamente.
+
+8. **Clareza na Comunicação** `clareza_comunicacao`  
+→ Comunicação clara.
+
+9. **Apresentação de Valores** `apresentacao_valores`  
+→ Informou data de vencimento, valores atualizados com juros/multa, pagamento por boleto; parcelamento só via cartão presencial na Unimed (rua Goiás, 695).
+
+10. **Confirmação de Aceitação** `confirmacao_aceitacao`  
+→ Não precisa solicitar aceite da negociação.
+
+11. **Reforço Prazo** `reforco_prazo`  
+→ Reforçou prazo de vencimento do acordo.
+
+12. **Encerramento Agradece** `encerramento_agradece`  
+→ Encerrou agradecendo e desejando um ótimo dia (variações aceitas).
+
+---
+## SCHEMA DE SAÍDA (JSON)
+```json
+{{
+  "id_chamada": "string",
+  "avaliador": "MonitorGPT",
+  "falha_critica": false,
+  "itens": {{
+    "abordagem_atendeu":        {{"status": "C|NC|NA", "observacao": ""}},
+    "confirmacao_seguranca":    {{"status": "C|NC|NA", "observacao": ""}},
+    "explicacao_motivo":        {{"status": "C|NC|NA", "observacao": ""}},
+    "tom_voz_adequado":         {{"status": "C|NC|NA", "observacao": ""}},
+    "cordialidade_respeito":    {{"status": "C|NC|NA", "observacao": ""}},
+    "empatia_cliente":          {{"status": "C|NC|NA", "observacao": ""}},
+    "escuta_ativa":             {{"status": "C|NC|NA", "observacao": ""}},
+    "clareza_comunicacao":      {{"status": "C|NC|NA", "observacao": ""}},
+    "apresentacao_valores":     {{"status": "C|NC|NA", "observacao": ""}},
+    "confirmacao_aceitacao":    {{"status": "C|NC|NA", "observacao": ""}},
+    "reforco_prazo":            {{"status": "C|NC|NA", "observacao": ""}},
+    "encerramento_agradece":    {{"status": "C|NC|NA", "observacao": ""}}
+  }}
+}}
+```
+
+⚠️ **Instruções finais**
+1. Avalie cada sub‑item: escolha status `C`, `NC` ou `NA`.
+2. Preencha `observacao` com até 15 palavras (ou deixe string vazia).  
 3. Preencha `falha_critica` conforme definido.
 4. **Não** inclua campos de peso nem pontuações.
 5. **Responda SOMENTE** o JSON acima – sem Markdown, sem texto extra.
 """
 }
+
+# Definir SYSTEM_PROMPT padrão para fallback legacy
+SYSTEM_PROMPT = PROMPTS_AVALIACAO.get('aguas_guariroba', '')
 
 # Inicializa o pipeline de Diarização do Pyannote.audio com tratamento de erros
 try:
@@ -842,6 +928,8 @@ def process_audio_folder(pasta, carteira='AGUAS'):
     # Determina a pasta de transcrições com base na carteira
     if carteira.lower() == 'vuon':
         pasta_transcricoes = os.path.join(pasta, 'Transcrições_vuon')
+    elif carteira.lower() == 'unimed':
+        pasta_transcricoes = os.path.join(pasta, 'Transcrições_unimed')
     else:
         pasta_transcricoes = os.path.join(pasta, 'Transcrições_aguas')
     
@@ -1292,6 +1380,8 @@ class CarteiraConfig:
             self.carteira = 'AGUAS'
         elif nome.lower() == 'vuon':
             self.carteira = 'VUON'
+        elif nome.lower() == 'unimed':
+            self.carteira = 'UNIMED'
         else:
             self.carteira = nome.upper()
 
@@ -1337,3 +1427,12 @@ if __name__ == '__main__':
     )
     processador_vuon = ProcessadorCarteira(config_vuon)
     processador_vuon.executar()
+
+    # Configuração da carteira UNIMED
+    config_unimed = CarteiraConfig(
+        nome='unimed',
+        pasta_audios=r'C:\Users\wanderley.terra\Documents\Audios_monitoria\Unimed',
+        pasta_transcricoes=os.path.join(r'C:\Users\wanderley.terra\Documents\Audios_monitoria\Unimed', 'Transcrições_unimed')
+    )
+    processador_unimed = ProcessadorCarteira(config_unimed)
+    processador_unimed.executar()
